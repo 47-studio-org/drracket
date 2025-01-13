@@ -15,6 +15,7 @@
          racket/file
          racket/dict
          racket/set
+         racket/match
          browser/external
          setup/plt-installer
          "suffix.rkt"
@@ -86,6 +87,8 @@
   (and (string? s)
        (regexp-match? #rx"\n$" s)))
 
+(preferences:set-default 'drracket:restore-previously-opened-files 'ask (or/c 'ask boolean?))
+
 (preferences:set-default 'drracket:most-recent-lang-line "#lang racket\n"
                          string-ending-with-newline?)
 
@@ -144,7 +147,8 @@
 (drr:set-default 'drracket:module-language-first-line-special? #t boolean?)
 
 (drr:set-default 'drracket:defns-popup-sort-by-name? #f boolean?)
-(drr:set-default 'drracket:show-line-numbers? #f boolean?)
+(drr:set-default 'drracket:show-line-numbers? #t boolean?)
+(drr:set-default 'drracket:show-indent-guides? #f boolean?)
 
 (drr:set-default 'drracket:toolbar-state 
                  '(#f . top)
@@ -408,7 +412,14 @@
      (make-check-box 'drracket:defs/ints-labels
                      (string-constant show-defs/ints-label)
                      editor-panel)
-     
+
+     (preferences:add-boolean-option-with-ask-me
+      editor-panel
+      (string-constant startup-open-files)
+      (string-constant restore-open-files-from-previous-session)
+      (string-constant open-a-blank-window)
+      'drracket:restore-previously-opened-files)
+
      ;; come back to this one.
      #;
      (letrec ([hp (new-horizontal-panel% 
@@ -617,6 +628,41 @@
   
   (preferences:set-default 'drracket:show-killed-dialog #t boolean?)
   
+  (preferences:set-default 
+    'drracket:recently-closed-tabs 
+    null 
+    (λ (x) (and (list? x) 
+                (andmap
+                (λ (x) 
+                  (and (list? x)
+                        (= 3 (length x))
+                        (path? (car x))
+                        (number? (cadr x))
+                        (number? (caddr x))))
+                x))))
+
+  (preferences:set-un/marshall 
+    'drracket:recently-closed-tabs
+    (λ (l) (map (λ (ele) (cons (path->bytes (car ele)) (cdr ele))) l))
+    (λ (l) 
+      (let/ec k
+        (unless (list? l)
+          (k '()))
+        (map (λ (x)
+                (unless (and (list? x)
+                            (= 3 (length x))
+                            (bytes? (car x))
+                            (number? (cadr x))
+                            (number? (caddr x)))
+                  (k '()))
+                (cons (bytes->path (car x)) (cdr x)))
+              l))))
+  
+  (preferences:set-default 'drracket:recently-closed-tabs-max-count 
+                           1000 
+                           (λ (x) (and (number? x)
+                                       (x . > . 0) 
+                                       (integer? x))))
   
   (drr:set-default 'drracket:large-letters-font #f
                    (or/c #f
@@ -641,6 +687,7 @@
    (preferences:set 'framework:exit-when-no-frames #t)]) 
 
 (color-prefs:add-color-scheme-entry 'drracket:language-name-and-memory-use-at-top-of-interactions
+                                    #:style "drracket:language name and memory use at top of interactions"
                                     "dark green"
                                     "pale green")
 
@@ -678,7 +725,9 @@
 (color-prefs:add-color-scheme-entry 'drracket:error-background-highlighting
                                     "pink"
                                     (make-object color% 117 0 0))
-
+(color-prefs:add-color-scheme-entry 'drracket:gold-error-background-highlighting
+                                    "gold"
+                                    (make-object color% 145 107 0))
 
 (define test-coverage-on-style-pref (string->symbol drracket:debug:test-coverage-on-style-name))
 (define test-coverage-off-style-pref (string->symbol drracket:debug:test-coverage-off-style-name))
@@ -692,6 +741,7 @@
                                     "orange"
                                     "indianred"
                                     #:background "black")
+
 (color-prefs:add-to-preferences-panel 
  "Module Language"
  (λ (parent)
@@ -877,14 +927,39 @@
       (send (send frame get-interactions-canvas) focus))
     (send frame show #t)))
 
-;; FIXME: get this from racket/list ?
-(define (remove-duplicates files)
-  (let loop ([files files])
-    (cond
-      [(null? files) null]
-      [else (if (member (car files) (cdr files))
-                (loop (cdr files))
-                (cons (car files) (loop (cdr files))))])))
+(define (remove-duplicates/falses files)
+  (define ht (make-hash))
+  (for/list ([files-in-frame (in-list files)])
+    (for/list ([file (in-list files-in-frame)]
+               #:when file
+               #:unless (hash-has-key? ht file))
+      (hash-set! ht file #t)
+      file)))
+
+;; ask-about-previously-opened-files : -> boolean
+(define (use-previously-opened-files?)
+  (match (preferences:get 'drracket:restore-previously-opened-files)
+    ['ask
+     (define-values (choice save-choice?)
+       (message+check-box/custom
+        (string-constant drracket)
+        (string-constant restore-open-files-from-previous-session?)
+        (string-constant dont-ask-again-always-current)
+        (string-constant yes)
+        (string-constant no)
+        #f))
+     (define use-them?
+       (match choice
+         [1 #t]
+         [2 #f]
+         [#f #f]))
+     (when save-choice?
+       (preferences:set 'drracket:restore-previously-opened-files use-them?))
+     use-them?]
+    [#t
+     #t]
+    [#f
+     #f]))
 
 ;; Queue a callback here to open the first frame
 ;; and install the user's keybindings so that the modules
@@ -913,41 +988,70 @@
    
    ;; NOTE: drscheme-normal.rkt sets current-command-line-arguments to
    ;; the list of files to open, after parsing out flags like -h
-   (let* ([files-to-open 
-           (if (preferences:get 'drracket:open-in-tabs)
-               (vector->list (current-command-line-arguments))
-               (reverse (vector->list (current-command-line-arguments))))]
-          [normalized/filtered
-           (let loop ([files files-to-open])
-             (cond
-               [(null? files) null]
-               [else (let ([file (car files)])
-                       (if (file-exists? file)
-                           (cons (normalize-path file) (loop (cdr files)))
-                           (begin
-                             (message-box
-                              (string-constant drscheme)
-                              (format (string-constant cannot-open-because-dne) file))
-                             (loop (cdr files)))))]))]
-          [no-dups (remove-duplicates normalized/filtered)]
-          [frames
-           (map (λ (f) (handler:edit-file
-                        f
-                        (λ () (drracket:unit:open-drscheme-window f))))
-                no-dups)])
+   (define files-to-open
+     (cond
+       ;; if someone passes command-line arguments to DrRacket
+       ;; make those supercede the remembered files from last time
+       [(and (equal? (current-command-line-arguments) (vector))
+             (not file-opened-via-application-file-handler?))
+        (define last-opened (preferences:get 'framework:last-opened-files))
+        (cond
+          [(and (ormap pair? last-opened)
+                (use-previously-opened-files?))
+           last-opened]
+          [else
+           '(())])]
+       [else
+        (if (preferences:get 'drracket:open-in-tabs)
+            (list (vector->list (current-command-line-arguments)))
+            (map list (reverse (vector->list (current-command-line-arguments)))))]))
+   (define already-warned? #f)
 
-     (when (and (null? frames)
-                (not file-opened-via-application-file-handler?))
-       (make-basic))
-     (when (and (preferences:get 'drracket:open-in-tabs)
-                (not (null? no-dups)))
-       ;; usually first-one will be (car no-dups) but sometimes
-       ;; opening a file results in an error so we don't actually
-       ;; open it, so `locate-file` returns #f.
-       (define first-one
-         (for/or ([nd (in-list no-dups)])
-           (define f (send (group:get-the-frame-group) locate-file nd))
-           (and f (cons f nd))))
-       (when first-one
-         (send (car first-one) make-visible (cdr first-one))))))
+   ;; (listof (listof ?))
+   ;; each outer list corresponds to a frame; each inner list are the tabs in that frame
+   (define normalized/filtered
+     (for/list ([frame-files (in-list files-to-open)])
+       (for/list ([file (in-list frame-files)])
+         (cond
+           [(file-exists? file)
+            (normalize-path file)]
+           [else
+            (unless already-warned?
+              (set! already-warned? #t)
+              (message-box
+               (string-constant drscheme)
+               (format (string-constant cannot-open-because-dne) file)))
+            #f]))))
+
+   ;; (listof (listof ?))
+   (define no-dups (remove-duplicates/falses normalized/filtered))
+   (define no-empties (filter pair? no-dups))
+   (cond
+     [(null? no-empties)
+      (unless file-opened-via-application-file-handler?
+        (make-basic))]
+     [else
+      (for ([files-in-frame (in-list no-empties)])
+        (define fr (drracket:unit:create-new-drscheme-frame (car files-in-frame)))
+        (send fr begin-container-sequence)
+        (parameterize ([start-new-tab-in-edit-sequence? #t])
+          (for ([file (in-list (cdr files-in-frame))])
+            (handler:edit-file file (λ () fr))))
+        (for ([tab (in-list (send fr get-tabs))])
+          (define defs (send tab get-defs))
+          (when (send defs in-edit-sequence?)
+            (send defs end-edit-sequence)))
+        (send fr end-container-sequence))
+
+      (when (preferences:get 'drracket:open-in-tabs)
+        ;; usually first-one will be (car no-dups) but sometimes
+        ;; opening a file results in an error so we don't actually
+        ;; open it, so `locate-file` returns #f.
+        (define first-one
+          (for*/or ([nds (in-list no-dups)]
+                    [nd (in-list nds)])
+            (define f (send (group:get-the-frame-group) locate-file nd))
+            (and f (cons f nd))))
+        (when first-one
+          (send (car first-one) make-visible (cdr first-one))))]))
  #f)

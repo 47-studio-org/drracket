@@ -573,11 +573,14 @@ Check Syntax collects the values of the
 @indexed-racket['disappeared-use],
 @indexed-racket['disappeared-binding],
 @indexed-racket['identifiers-as-disappeared-uses?],
+@indexed-racket['identifier-as-keyword],
 @indexed-racket['sub-range-binders], and
 @indexed-racket['mouse-over-tooltips] and uses them to add
-additional arrows to the program text. These properties are
+control which arrows are added to the program text. These properties are
 intended for use when a macro discards or manufactures identifiers that,
-from the programmers perspective, should be binding each other.
+from the programmers perspective, should be binding each other, or when
+there are identifiers that are intended to be used more in the spirit of keywords,
+and thus should be ignored.
 
 For example, here is program with a macro that discards its arguments, but
 adds properties to the result syntax object so that the two occurrences of @racket[_a]
@@ -702,18 +705,48 @@ then the arrows are the normal arrow color.
 
 The value of the @racket['sub-range-binders] property is expected
 to be a tree of @racket[cons] pairs (in any configuration) whose leaves
-are either ignored or are vectors of the shape
-@racketblock[(vector/c syntax?
-                       exact-nonnegative-integer? exact-nonnegative-integer?
-                       (real-in 0 1) (real-in 0 1)
-                       syntax?
-                       exact-nonnegative-integer? exact-nonnegative-integer?
-                       (real-in 0 1) (real-in 0 1))]
-If the leaf is a vector, the first syntax object is expected to be an identifier whose
-bound occurrences should have arrows that point to the syntax object in the sixth
-position in the vector. The numbers indicate the starting point and the range inside
-the corresponding identifier to consider as the location of the end of the arrow.
-The property is looked for in expression positions and on binding identifiers.
+are either ignored or are vectors with either of these shapes:
+@racketblock[(or/c (vector/c identifier? natural? natural?
+                             identifier? natural? natural?)
+
+                   (vector/c identifier?
+                             natural? natural?
+                             (real-in 0 1) (real-in 0 1)
+
+                             identifier?
+                             natural? natural?
+                             (real-in 0 1) (real-in 0 1)))]
+
+Each vector is interpreted as a single arrow. The first
+identifier in the vector is the start of the arrow and the
+second identifier in the vector is the destination of the
+arrow. The two natural numbers that follow each identifier adjust
+the precise starting and ending ranges for the arrows,
+however. They are interpreted as offsets into the position of
+each corresponding identifier, making the arrows start and
+end on just a portion of the identifier, instead of the
+entire identifier.
+
+If the vector has 8 elements, then the two real numbers are
+treated as the precise location where the arrow starts and
+ends, inside the rectangle that corresponds to the start and
+end of the identifier. The first real number is for the x
+direction and the second one is for the y direction. For
+example, if some identifier has a position and span of 100
+and 10, and the offset are 1 and 5, then the rectangle that
+bounds the corresponding end of the arrow would be from
+position 101 to 105. This entire range gets highlighted when
+the mouse moves over it. The arrow itself, however, will
+start from some specific point inside that editor range,
+normally in the center and corresponds to the situation
+where the two real numbers are both @racket[0.5]. If,
+however the two reals are both @racket[1/3], then the arrow
+will start one third of the way from the top to the bottom
+and one third of the way from the left to the right.
+
+The property is looked for in expression positions and on
+binding identifiers.
+
 Here's an example:
 
 @codeblock{#lang racket/base
@@ -755,9 +788,6 @@ on @racket[_big] in the center of the identifiers; the @racket[.5 0] and the
 @racket[.5 1] in the second vector put the arrows at the top and bottom
 center for @racket[_generator].
 
-Also, for backwards compatibility, if the vector has only six elements, those
-elements must be everything except the @racket[(real-in 0 1)] elements listed above and,
-in that case, all four numbers are all taken to be @racket[0.5].
 
 The value of the @racket['mouse-over-tooltips] property is expected to be 
 to be a tree of @racket[cons] pairs (in any configuration) whose leaves
@@ -794,11 +824,18 @@ For example, here's a macro that shows the span of itself in a tooltip on mouseo
 
 (char-span (+ 1 2))}
 
+If the syntax property @racket['identifier-as-keyword] is any value
+except @racket[#f] and appears on an identifier, then Check Syntax
+ignores the identifier, not drawing any arrows to it.
+
 @history[#:changed "1.3" @list{
           Looks for @racket['sub-range-binders]
-          on binding identifiers (not just in expression positions).}]
+          on binding identifiers (not just in expression positions).}
+         #:changed "1.5" @list{
+          Looks for @racket['identifier-as-keyword] on identifiers.}]
 
 @section{Cooperating with Background Check Syntax}
+@section-index["online-check-syntax logger"]
 
 DrRacket's continuous, background check syntax runs each time 
 an edit to the definitions text happens. In some cases, that
@@ -815,6 +852,14 @@ e.g.
 The fourth argument to @racket[log-message] should be a list 
 of syntax objects; these are processed as if they were the result
 of expansion. 
+
+The syntax objects whose @racket[syntax-source] field does
+not match the source of the file that is currently being
+expanded are ignored. That is, sometimes a macro may log a
+syntax object to be used by DrRacket in this fashion, but
+the macro may not be from the file that DrRacket's
+expanding, but one from one that is required by it; hence
+this check is in place to skip them.
 
 Note: the identifiers in these objects should be @racket[syntax-original?]
 or else they will be ignored by check syntax.
@@ -903,6 +948,7 @@ above for details).
 @include-section["module-language-tools.scrbl"]
 @include-section["module-language.scrbl"]
 @include-section["tracing.scrbl"]
+@include-section["init.scrbl"]
 
 @section{Backwards Compatibility}
 
@@ -940,5 +986,6 @@ library; they are here for backwards compatibility and to provide links to the
 @(tools-include/drs "rep")
 @(tools-include/drs "unit")
 @(tools-include/drs "tracing")
+@(tools-include/drs "init")
 
 @index-section[]

@@ -869,10 +869,17 @@ all of the names in the tools library, for use defining keybindings
   drracket:debug:get-error-color
   (-> (is-a?/c color%))
   @{Returns the background color used to highlight errors in the definitions window
-    (and other places, possibly).
+    (and other places, possibly). See also @racket[drracket:debug:get-error-color-name].
     
     The result depends on the @racket['framework:white-on-black?] preference
     setting.})
+
+ (proc-doc
+  drracket:debug:get-error-color-name
+  (-> color-prefs:color-scheme-color-name?)
+  @{Returns the name of the background color used to
+    highlight errors in the definitions window
+    (and other places, possibly).})
  
  (proc-doc/names
   drracket:debug:show-backtrace-window
@@ -1475,6 +1482,41 @@ all of the names in the tools library, for use defining keybindings
   @{Call this function to add tracing annotations to the a fully-expanded
     expression. When the program runs, DrRacket will pop open the tracing
     window to display the trace.})
+
+
+;                             
+;                             
+;                             
+;                             
+;                             
+;                             
+;   ;;;            ;;;    ;   
+;   ;;;            ;;;  ;;;   
+;                       ;;;   
+;   ;;;  ;;; ;;;   ;;; ;;;;;; 
+;   ;;;  ;;;;;;;;  ;;; ;;;;;; 
+;   ;;;  ;;;  ;;;  ;;;  ;;;   
+;   ;;;  ;;;  ;;;  ;;;  ;;;   
+;   ;;;  ;;;  ;;;  ;;;  ;;;   
+;   ;;;  ;;;  ;;;  ;;;  ;;;   
+;   ;;;  ;;;  ;;;  ;;;  ;;;;; 
+;   ;;;  ;;;  ;;;  ;;;   ;;;; 
+;                             
+;                             
+;                             
+;                             
+;                             
+
+ 
+ (proc-doc/names
+  drracket:init:original-error-display-handler
+  (-> string? any/c any)
+  (message exn)
+  @{This is the @racket[error-display-handler] installed
+ at the time that DrRacket starts up.
+
+ DrRacket sets the @racket[error-display-handler] to one that
+ shows an ``Internal Error'' dialog box.})
  
  ;                                                           
  ;                                                           
@@ -1681,19 +1723,42 @@ all of the names in the tools library, for use defining keybindings
              (or/c #f
                    (list/c string? string? string?)
                    (non-empty-listof (list/c string? string? string?))
+                   (non-empty-listof (list/c string? string? string?
+                                             (or/c #f
+                                                   (-> (is-a/c text%)
+                                                       string?
+                                                       exact-integer?
+                                                       (->* ((is-a/c text%)
+                                                             string?
+                                                             exact-integer?)
+                                                            (#:case-sensitive? any/c
+                                                             #:delimited? any/c)
+                                                            (or/c exact-integer? #f))
+                                                       (or/c exact-integer? #f)))
+                                             (or/c #f
+                                                   (-> (is-a/c text%)
+                                                       exact-integer?
+                                                       (-> (is-a/c text%)
+                                                           exact-integer?
+                                                           string?)
+                                                       string?))))
                    (cons/c string? string?))
              (list "(define" "(define ...)" "δ")]{
           specifies the prefix that the define popup should look for and what
           label it should have, or @racket[#f] if it should not appear at all.
+          Text is found only when it is not in a comment or string literal.
           
           If the list of three strings alternative is used, the first string is
           the prefix that is looked for when finding definitions. The second
           and third strings are used as the label of the control, in horizontal
           and vertical mode, respectively.
 
-          If it is a list of lists of three strings, then multiple prefixes are used
+          If it is a list of lists, then multiple prefixes are used
           for the definition pop-up. The name of the popup menu is based only on the
-          first element of the list.
+          first element of the list. When a nested list contains fourth and fifth
+          elements, they can supply replacements (when not @racket[#f]) for the default functions that
+          find a prefix and extract the subsequent name. See @secref["sec:define-popup"]
+          for information about the protocols for the finding and extraction procedures.
           
           The pair of strings alternative is deprecated. If it is used, 
           the pair @racket[(cons a-str b-str)] is the same as @racket[(list a-str b-str "δ")].

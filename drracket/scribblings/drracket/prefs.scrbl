@@ -13,20 +13,31 @@ The preferences dialog consists of several panels.
 
 This panel controls the main font used by DrRacket.
 
-
-@section{@onscreen{Colors}}
+@section[#:tag "sec:colors"]{@onscreen{Colors}}
 
 The @onscreen{Colors} panel has several sub-panels that let you
-configure the colors that DrRacket uses for the editor background, for
-highlighting matching parentheses, for the syntax coloring for Racket
-and Java modes, for @onscreen{Check Syntax}, and for the colors of the
-text in the @tech{interactions window}.
+configure the colors that DrRacket uses.
+@itemize[
+ @item{@onscreen{Color Schemes}
 
-It also has two buttons, @onscreen{White on Black} and @onscreen{Black
-on White}, which set a number of defaults for the color preferences and
-change a few other aspects of DrRacket's behavior to make DrRacket's
-colors look nicer for those two modes.
+  DrRacket comes with a number of different color schemes
+  that you can choose from. The @onscreen{Classic} and
+  @onscreen{White on Black} schemes are actually a matched
+  pair that, under Mac OS and Linux will be chosen based on
+  the operating system's dark-mode configuration. Similarly
+  for the two Tol's color-blind safe modes.}
 
+ @item{@onscreen{Background}
+
+  This section of the preferences configures the default
+  background color and the colors used behind matching
+  parentheses. The @onscreen{Parenthesis color scheme} menu
+  also includes options that shade nested parentheses darker
+  and lighter, based on the nesting depth.}]
+
+The remaining panels inside the @onscreen{Colors} panel
+allow the configuration of many different colors that
+DrRacket uses for specific parts of its interface.
 
 @section{@onscreen{Editing}}
 
@@ -159,7 +170,14 @@ The @onscreen{Editing} panel consists of several sub-panels:
       @item{@PrefItem{Show definitions/interactions labels} --- If checked,
              then the teaching languages show big friendly labels indicating
              which window is the definitions window and which is the interactions
-             window.]}]}
+             window.]}
+ @item{@PrefItem{Startup Open Files} --- If the @PrefItem{Restore files from previous session} is selected,
+    DrRacket will reopen the files that were open when DrRacket last exited, as it starts up.
+    When @PrefItem{Open a blank window} is selected, DrRacket starts with a new, fresh window each time.
+    When @PrefItem{Ask me each time} is selected and some files were open in the previous session,
+    DrRacket will open a dialog box asking if you would like to open the same files as last time.
+    If DrRacket is started from the command-line (or via Mac OS's @tt{open} command) and files are
+    supplied, then this preference is ignored, and only those files are opened.}]}
 
 @item{@onscreen{Racket}
 
@@ -224,14 +242,14 @@ The @onscreen{Editing} panel consists of several sub-panels:
 @item{@PrefItem{Number of recent items} --- controls the length of the
       @onscreen{Open Recent} menu (in the @onscreen{File} menu).}
 
-@item{@PrefItem{Auto-save files} --- If checked, the editor generates
-      autosave files (see @secref["drracket-autosave-files"]) for files
-      that have not been saved after five minutes.}
+ @item{@PrefItem{Make backups for unsaved files} --- If checked, the editor generates
+      copies of open files (see @secref["drracket-autosave-files"]) for files
+      that have not been saved after thirty seconds.}
 
-@item{@PrefItem{Backup files} --- If checked, when saving a file for the
+@item{@PrefItem{Create first-change files} --- If checked, when saving a file for the
       first time in each editing session, the original copy of the file
-      is copied to a backup file in the same directory.  The backup
-      files have the same name as the original, except that they end in
+      is copied to a new file in the same directory.  The new
+      files has the same name as the original, except that it ends in
       either @indexed-file{.bak} or @indexed-file{~}.}
 
 @item{@PrefItem{Show status-line} --- If checked, DrRacket shows a

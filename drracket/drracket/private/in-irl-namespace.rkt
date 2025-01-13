@@ -1,6 +1,6 @@
 #lang racket/base
 
-(require racket/match
+(require racket/math
          racket/class
          racket/contract/option
          racket/contract
@@ -46,7 +46,7 @@
   
 (define (get-insulated-module-lexer/inside)
   (unless module-lexer
-    (set! module-lexer (waive-option (dynamic-require 'syntax-color/module-lexer 'module-lexer))))
+    (set! module-lexer (waive-option (dynamic-require 'syntax-color/module-lexer 'module-lexer*))))
   module-lexer)
 
 (define (get-definitions-text-surrogate/inside)
@@ -98,8 +98,28 @@
              (- after-pos 1)
              (- after-pos 1))]
     [else
-     (define-values (_5 _6 peeking-pos) (port-next-location peeking-port))
-     (values #f #f #f #f (+ before-pos peeking-pos -2))]))
+     (define restarted-port (peeking-input-port port))
+     (port-count-lines! restarted-port)
+     (let/ec escape
+       (define (done)
+         (define-values (_1 _2 grammar-matching-end-position)
+           (port-next-location restarted-port))
+         (escape #f #f #f #f (+ (- before-pos 1) (- grammar-matching-end-position 1))))
+       (define (check-next-char rx-allowed)
+         (define got (read-char restarted-port))
+         (when (eof-object? got) (done))
+         (unless (regexp-match? rx-allowed (string got)) (done))
+         got)
+       (check-next-char #rx"#")
+       (define bang-or-l (check-next-char #rx"[!l]"))
+       (when (equal? bang-or-l #\l)
+         (check-next-char #rx"a")
+         (check-next-char #rx"n")
+         (check-next-char #rx"g")
+         (check-next-char #rx" "))
+       (let loop ()
+         (check-next-char #rx"[-+_/0-9a-zA-Z]")
+         (loop)))]))
     
 (define (reset-irl!/inside port)
   (set!-values (language-get-info
@@ -164,6 +184,16 @@
            (-> read-only-text/c
                exact-nonnegative-integer?
                (or/c #f exact-nonnegative-integer?)))]
+    [(drracket:range-indentation)
+     (or/c #f
+           (-> read-only-text/c
+               exact-nonnegative-integer?
+               exact-nonnegative-integer?
+               (or/c #f (listof (list/c exact-nonnegative-integer? string?)))))]
+    [(drracket:grouping-position)
+     (or/c #f
+           (-> read-only-text/c natural? natural? (or/c 'up 'down 'backward 'forward)
+               (or/c #f #t natural?)))]
     [(drracket:keystrokes)
      ;; string? is too permissive; need racket/gui to publish
      ;; the actual contract (used on `map-function`)
@@ -181,10 +211,39 @@
                                     (-> object? any)
                                     (or/c real? #f)))))]
 
-    [(drracket:opt-out-toolbar-buttons drscheme:opt-out-toolbar-buttons drracket:opt-in-toolbar-buttons)
+    [(drracket:opt-out-toolbar-buttons
+      drscheme:opt-out-toolbar-buttons
+      drracket:opt-in-toolbar-buttons)
      (or/c #f (listof symbol?))]
+    [(drracket:paren-matches) (or/c #f (listof (list/c symbol? symbol?)))]
+    [(drracket:quote-matches) (or/c #f (listof char?))]
+    [(drracket:comment-delimiters)
+     (listof
+      (or/c (list/c 'line no-newline-string/c no-newline-string/c)
+            (list/c 'region
+                    no-newline-string/c no-newline-string/c
+                    no-newline-string/c no-newline-string/c)))]
+    [(drracket:define-popup)
+     (or/c #f
+           (non-empty-listof (list/c string? string? string?))
+           (non-empty-listof (list/c string? string? string?
+                                     (or/c #f
+                                           (-> read-only-text/c string? exact-integer?
+                                               (->* (read-only-text/c string? exact-integer?)
+                                                    (#:case-sensitive? any/c
+                                                     #:delimited? any/c)
+                                                    (or/c exact-integer? #f))
+                                               (or/c exact-integer? #f)))
+                                     (or/c #f
+                                           (-> read-only-text/c exact-integer?
+                                               (-> read-only-text/c exact-integer?
+                                                   string?)
+                                               string?)))))]
     [else
      (error 'key->contract "unknown key")]))
+
+(define no-newline-string/c
+  (and/c string? (not/c #rx"[\r\n]")))
 
 (define (get-read-language-last-position/inside) read-language-last-position)
 
@@ -194,7 +253,8 @@
 (define (get-read-language-name/inside) lang-name)
 
 (module+ test
-  (require rackunit racket/gui/base)
+  (require racket/gui/base
+           rackunit)
 
     (define (compute-lang-info/wrap str)
     (define sp (open-input-string str))
@@ -223,4 +283,12 @@
   (check-equal? (compute-lang-info/wrap "(stuff)")
                 (list #f #f #f 1))
   (check-equal? (compute-lang-info/wrap "123 456")
-                (list #f #f #f 1)))
+                (list #f #f #f 1))
+  (check-equal? (compute-lang-info/wrap ";; abc\n#lang rackket\nabc")
+                (list #f #f #f 21))
+  (check-equal? (compute-lang-info/wrap ";; abc\n(whatevs)")
+                (list #f #f #f 8))
+  (check-equal? (compute-lang-info/wrap "#lan g racket")
+                (list #f #f #f 5))
+  (check-equal? (compute-lang-info/wrap "#!r acket")
+                (list #f #f #f 4)))

@@ -1,11 +1,13 @@
 #lang racket/base
 (require "drracket-test-util.rkt"
          framework
+         drracket/private/stack-checkpoint
          racket/string
          (for-syntax racket/base)
          racket/class)
 
-(provide test t rx run-test 
+(provide test t rx run-test
+         (struct-out test-struct)
          in-here in-here/path write-test-modules)
 
 ;; utilities to use with scribble/reader
@@ -13,19 +15,18 @@
 (define (rx . strs)
   (regexp (regexp-replace* #rx" *\n *" (string-append* strs) ".*")))
 
-(define-struct test
+(struct test
   (definitions    ; Rec X = (or/c string 'xml-box (listof X))
     interactions  ; (union #f string)
     result        ; (or/c string regexp)
     all?          ; boolean (#t => compare all of the text between the 3rd and n-1-st line)
-    error-ranges  ; (or/c 'dont-test
-    ;                     (-> (is-a?/c text)
-    ;                         (is-a?/c text)
-    ;                         (or/c #f (listof ...))))
-    ;    fn => called with defs & ints, result must match get-error-ranges method's result
+    before-exec   ; (-> any)
+    after-test    ; (-> any)
+    wait-for-drracket-frame-after-test? ; boolean
+    extra-assert  ; (-> (is-a?/c text) (is-a?/c text) boolean)
     line)         ; number or #f: the line number of the test case
-
-  #:omit-define-syntaxes)
+  #:name test-struct
+  #:constructor-name make-test)
 
 (define (in-here/path file) (path->string (build-path (find-system-path 'temp-dir) file)))
 (define (in-here file) (format "~s" (in-here/path file)))
@@ -37,12 +38,18 @@
      (with-syntax ([line (syntax-line stx)])
        #'(test/proc line args ...))]))
 (define (test/proc line definitions interactions results [all? #f]
-                   #:error-ranges [error-ranges 'dont-test])
+                   #:extra-assert [extra-assert (λ (x y) #t)]
+                   #:before-execute [before-exec (λ () (void))]
+                   #:after-test [after-test (λ () (void))]
+                   #:wait-for-drracket-frame-after-test? [wait-for-drs? #f])
   (set! tests (cons (make-test definitions
                                interactions 
                                results 
-                               all? 
-                               error-ranges
+                               all?
+                               before-exec
+                               after-test
+                               wait-for-drs?
+                               extra-assert
                                line)
                     tests)))
 
@@ -84,6 +91,7 @@
          (error 'module-lang-test-utils.rkt
                 "unknown thing in test-definitions field ~s"
                 to-handle)]))
+    ((test-before-exec test))
     (do-execute drs)
     
     (define ints (test-interactions test))
@@ -165,30 +173,48 @@
         (for ([stack (in-list stacks)])
           (when stack
             (eprintf "\n----\n")
-            (for ([frame (in-list stack)])
-              (eprintf "  ~s\n" frame))
+            (unless (empty-viewable-stack? stack)
+              (define stack-iterator (copy-viewable-stack stack))
+              (let loop ()
+                (define-values (list-of-srcloc-count has-next?)
+                  (viewable-stack-get-next-items! stack-iterator))
+                (for ([srcloc-count (in-list list-of-srcloc-count)])
+                  (define frame (srcloc->string (car srcloc-count)))
+                  (define count (+ 1 (cdr srcloc-count)))
+                  (if (> count 1)
+                      (eprintf "  ~a [repeated ~a times]\n" frame count)
+                      (eprintf "  ~a\n" frame)))
+                (when has-next?
+                  (loop))))
             (eprintf "----\n")))))
-    (cond
-      [(eq? (test-error-ranges test) 'dont-test)
-       (void)]
-      [else
-       (let ([error-ranges-expected
-              ((test-error-ranges test) definitions-text interactions-text)])
-         (unless (equal? error-ranges-expected (send interactions-text get-error-ranges))
-           (eprintf "FAILED (line ~a; ranges): ~a\n  expected: ~s\n       got: ~s\n"
-                    (test-line test)
-                    (test-definitions test)
-                    error-ranges-expected
-                    (send interactions-text get-error-ranges))))])))
+    (define the-assert (test-extra-assert test))
+    (define-values (kws-req kws-acc) (procedure-keywords the-assert))
+    (define-values (kws kw-vals)
+      (for/lists (kws kw-vals)
+                 ;; the keywords must be sorted
+                 ([kw-val (in-list `((#:stacks . ,stacks)
+                                     (#:test . ,test)
+                                     (#:text . ,text)))]
+                  #:when (or (not kws-acc) (memq (car kw-val) kws-acc)))
+        (values (car kw-val) (cdr kw-val))))
+    (unless (keyword-apply the-assert kws kw-vals definitions-text interactions-text '())
+      (eprintf "FAILED line ~a; extra assertion returned #f\n"
+               (test-line test)))
+    ((test-after-test test))
+    (when (test-wait-for-drracket-frame-after-test? test)
+      (retrieve-drracket-frames!))))
 
 (define drs 'not-yet-drs-frame)
 (define interactions-text 'not-yet-interactions-text)
 (define definitions-text 'not-yet-definitions-text)
 
-(define (run-test)
+(define (retrieve-drracket-frames!)
   (set! drs (wait-for-drracket-frame))
   (set! interactions-text  (send drs get-interactions-text))
-  (set! definitions-text (send drs get-definitions-text))
+  (set! definitions-text (send drs get-definitions-text)))
+
+(define (run-test)
+  (retrieve-drracket-frames!)
   (init-temp-files)
   (run-use-compiled-file-paths-tests)
   (set-module-language! #f)

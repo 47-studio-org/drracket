@@ -10,7 +10,7 @@
          pkg/lib
          framework/preferences
          errortrace/stacktrace
-         errortrace/errortrace-key
+         "drracket-errortrace-key.rkt"
          (prefix-in *** '#%foreign) ;; just to make sure it is here
          "compiled-dir.rkt")
 
@@ -21,7 +21,8 @@
          get-init-dir
          should-annotate?
          make-with-mark
-         make-debug-compile-handler/errortrace-annotate)
+         make-debug-compile-handler/errortrace-annotate
+         current-parallel-lock-shutdown-evt)
 
 (preferences:set-default 'drracket:child-only-memory-limit
                          (* 1024 1024 128)
@@ -71,7 +72,13 @@
   (current-namespace (make-base-empty-namespace))
   ;; is this wise?
   #;(namespace-attach-module orig-namespace ''#%foreign))
-  
+
+;; Use this parameter when creating a parallel-lock client,
+;; so locks can be released when the user custodian is shut down.
+;; The `set-module-language-parameters` function sets this
+;; parameter on the assumption at the current custodian at that
+;; point is the user custodian.
+(define current-parallel-lock-shutdown-evt (make-parameter never-evt))
 
 (define-logger drracket/cm)
 (define (set-module-language-parameters settings 
@@ -159,6 +166,7 @@
                  (orig path mod-name))
                (orig path mod-name))))))
     ;; Install the compilation manager:
+    (current-parallel-lock-shutdown-evt (make-custodian-box (current-custodian) #t))
     (parallel-lock-client module-language-parallel-lock-client)
     (current-load/use-compiled (make-compilation-manager-load/use-compiled-handler 
                                 #t
@@ -208,7 +216,7 @@
      (define column (or (syntax-column src-stx) 0))
      (with-syntax ([expr expr]
                    [mark (vector source line column position span)]
-                   [et-key (syntax-shift-phase-level #'errortrace-key phase)]
+                   [et-key (syntax-shift-phase-level #'drracket-errortrace-key phase)]
                    [wcm (syntax-shift-phase-level #'with-continuation-mark phase)]
                    [qte (syntax-shift-phase-level #'quote phase)])
        (syntax

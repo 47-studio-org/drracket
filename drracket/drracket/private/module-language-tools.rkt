@@ -4,19 +4,23 @@
          mrlib/bitmap-label
          mrlib/close-icon
          racket/contract
+         racket/contract/option
          racket/place
-         framework
-         framework/private/srcloc-panel
+         racket/format
          racket/unit
          racket/class
+         racket/math
          racket/gui/base
+         syntax-color/module-lexer
+         framework
+         framework/private/srcloc-panel
+         framework/private/logging-timer
          drracket/private/drsig
          "local-member-names.rkt"
          "insulated-read-language.rkt"
          "eval-helpers-and-pref-init.rkt"
-         framework/private/logging-timer
-         string-constants
-         racket/format)
+         string-constants)
+(module+ test (require rackunit))
 
 (define op (current-output-port))
 (define (oprintf . args) (apply fprintf op args))
@@ -26,7 +30,8 @@
           [prefix drracket:module-language: drracket:module-language/int^]
           [prefix drracket:language: drracket:language^]
           [prefix drracket:language-configuration: drracket:language-configuration^]
-          [prefix drracket:init: drracket:init^]
+          [prefix drracket:init: drracket:init/int^]
+          [prefix drracket:rep: drracket:rep^]
           [prefix drracket: drracket:interface^])
   (export drracket:module-language-tools/int^)
 
@@ -196,25 +201,120 @@
       (set! after-initialized void)
       
       (define/public (initialize-module-language)
-        (let ([defs (get-definitions-text)])
-          (when (send defs get-in-module-language?)
-            (send defs move-to-new-language))))))
+        (define defs (get-definitions-text))
+        (when (send defs get-in-module-language?)
+          (send defs move-to-new-language)))))
   
   (struct hash-lang-error-state (display-msg more-info-msg) #:transparent)
+
+  (define-local-member-name range-indent)
+  (define ml-tools-text<%>
+    (interface ()
+      range-indent))
   
-  (define definitions-text-mixin
+  (define ml-tools-text-mixin
+    (mixin (text:basic<%>) (ml-tools-text<%>)
+      (inherit position-paragraph paragraph-start-position
+               delete insert
+               begin-edit-sequence end-edit-sequence)
+      (define/public (range-indent range-indentation-function start end)
+        (define substs (range-indentation-function this start end))
+        (and substs
+             (let ()
+               (define start-line (position-paragraph start #f))
+               (define end-line (position-paragraph end #t))
+               (begin-edit-sequence)
+               (let loop ([substs substs] [line start-line])
+                 (unless (or (null? substs)
+                             (line . > . end-line))
+                   (define pos (paragraph-start-position line))
+                   (define del-amt (caar substs))
+                   (define insert-str (cadar substs))
+                   (unless (zero? del-amt)
+                     (delete pos (+ pos del-amt)))
+                   (unless (equal? insert-str "")
+                     (insert insert-str pos))
+                   (loop (cdr substs) (add1 line))))
+               (end-edit-sequence)
+               #t)))
+
+      (super-new)))
+
+  (define (interactions-text-mixin t)
+    (only-interactions-text-mixin (ml-tools-text-mixin t)))
+
+  (define only-interactions-text-mixin
+    (mixin (racket:text<%> drracket:rep:text<%> ml-tools-text<%>) ()
+      (inherit get-definitions-text compute-racket-amount-to-indent
+               get-start-position get-end-position
+               range-indent last-position
+               get-surrogate set-surrogate)
+      (define/augment (compute-amount-to-indent pos)
+        (define defs (get-definitions-text))
+        (cond
+          [(send defs get-in-module-language?)
+           (or ((send defs get-indentation-function) this pos)
+               (compute-racket-amount-to-indent pos))]
+          [else
+           (compute-racket-amount-to-indent pos)]))
+
+      (define/override (tabify-selection [start (get-start-position)]
+                                         [end (get-end-position)])
+        (define defs (get-definitions-text))
+        (unless (and (send defs get-in-module-language?)
+                     (range-indent (send defs get-range-indentation-function) start end))
+          (super tabify-selection start end)))
+
+      (define/override (tabify-all)
+        (define defs (get-definitions-text))
+        (unless (and (send defs get-in-module-language?)
+                     (range-indent (send defs get-range-indentation-function)
+                                   0 (last-position)))
+          (super tabify-all)))
+
+      (define/override (reset-console)
+        (when (send (get-definitions-text) get-in-module-language?)
+          (define ints-surrogate (get-surrogate))
+          (when ints-surrogate
+            ;; when ints-surrogate is #f, then we
+            ;; should in a language other than the module
+            ;; language so we can safely skip this
+            (define the-irl (send (get-definitions-text) get-irl))
+            (send ints-surrogate set-get-token
+                  (call-read-language the-irl 'color-lexer (waive-option module-lexer)))
+            (send ints-surrogate set-matches
+                  (call-read-language the-irl
+                                      'drracket:paren-matches
+                                      racket:default-paren-matches))
+            (set-surrogate ints-surrogate)))
+        (super reset-console))
+
+      (super-new)))
+
+  (define (definitions-text-mixin t)
+    (only-definitions-text-mixin (ml-tools-text-mixin t)))
+
+  (define only-definitions-text-mixin
     (mixin (text:basic<%> 
             racket:text<%>
             drracket:unit:definitions-text<%>
-            drracket:module-language:big-defs/ints-label<%>)
+            drracket:module-language:big-defs/ints-label<%>
+            ml-tools-text<%>)
            (drracket:module-language-tools:definitions-text<%>)
       (inherit get-next-settings
+               range-indent
                get-filename
                set-lang-wants-big-defs/ints-labels?
                get-tab
                last-position
-               get-surrogate
-               start-colorer
+               get-start-position
+               get-end-position
+               insert
+               delete
+               begin-edit-sequence
+               end-edit-sequence
+               position-paragraph
+               paragraph-start-position
                set-surrogate
                get-keymap)
       (define in-module-language? #f)      ;; true when we are in the module language
@@ -225,6 +325,28 @@
       ;; (this will be the end of the #lang line if there is one,
       ;; or it will be some conservative place if there isn't)
       (define hash-lang-last-location #f)
+      ;; the region between 0 and `hash-lang-comment-end-position` (unless it is #f)
+      ;; is known to be a comment and so edits there might not change the #lang line
+      ;; if `hash-lang-comment-end-position` is #f, then we don't have a comment region to track
+      ;; and so all edits before `hash-lang-last-location` will reload the #lang extensions
+      (define hash-lang-comment-end-position #f)
+      (define/private (set-hash-lang-comment-end+last-location _hash-lang-last-location
+                                                               _hash-lang-comment-end-position)
+        (unless (or (and (not _hash-lang-last-location)
+                         (not _hash-lang-comment-end-position))
+                    (and (natural? _hash-lang-last-location)
+                         (natural? _hash-lang-comment-end-position)
+                         (<= _hash-lang-comment-end-position _hash-lang-last-location)))
+          (error 'set-hash-lang-comment-end+last-location
+                 (string-append
+                  "hash-lang-last-location and hash-lang-comment-end-position invariant broken;\n"
+                  " expected both to be #f or the comment-end to precede the last\n"
+                  "  hash-lang-last-location: ~s\n"
+                  "  hash-lang-comment-end-position: ~s")
+                 _hash-lang-last-location
+                 _hash-lang-comment-end-position))
+        (set! hash-lang-last-location _hash-lang-last-location)
+        (set! hash-lang-comment-end-position _hash-lang-comment-end-position))
 
       (define/public (irl-get-read-language-port-start+end)
         (get-read-language-port-start+end the-irl))
@@ -241,11 +363,36 @@
       (define/public (get-in-module-language?) in-module-language?)
       (define/augment (after-insert start len)
         (inner (void) after-insert start len)
+        (when (and hash-lang-last-location
+                   hash-lang-comment-end-position)
+          (cond
+            [(<= start hash-lang-comment-end-position)
+             (set-hash-lang-comment-end+last-location (+ hash-lang-last-location len)
+                                                      (+ hash-lang-comment-end-position len))]
+            [(<= start hash-lang-last-location)
+             (set-hash-lang-comment-end+last-location (+ hash-lang-last-location len)
+                                                      hash-lang-comment-end-position)]))
         (modification-at start))
       (define/augment (after-delete start len)
         (inner (void) after-delete start len)
+        (when (and hash-lang-last-location
+                   hash-lang-comment-end-position)
+          (cond
+            [(<= (+ start len) hash-lang-comment-end-position)
+             ;; a deletion entirely inside the comment region, so we optimistically
+             ;; update `hash-lang-comment-end-position` and `hash-lang-last-location`
+             ;; and the comment check in `modification-at` will confirm
+             (set-hash-lang-comment-end+last-location (- hash-lang-last-location len)
+                                                      (- hash-lang-comment-end-position len))]
+            [(> start hash-lang-last-location)
+             ;; here the deletion is entirely after and so we don't need to update anything
+             (void)]
+            [else
+             ;; here the deletion spans the end of the comment region and possibly
+             ;; the lang line. Just give up and reload #lang extensions
+             (set-hash-lang-comment-end+last-location #f #f)]))
         (modification-at start))
-      
+
       (define/augment (after-save-file success?)
         (inner (void) after-save-file success?)
         (when success? (filename-maybe-changed)))
@@ -268,22 +415,36 @@
       ;; is in the region of the lang line, or when start is #f, or
       ;; when there is no #lang line known.
       (define/private (modification-at start)
+        (define (start-the-move-to-new-language-timer)
+          (unless timer
+            (set! timer (new logging-timer%
+                             [notify-callback
+                              (λ ()
+                                (when in-module-language?
+                                  (move-to-new-language)))]
+                             [just-once? #t])))
+          (send timer stop)
+          (send timer start 200 #t))
         (send (send (get-tab) get-frame) when-initialized
               (λ ()
                 (when in-module-language?
                   (when (or (not start)
                             (not hash-lang-last-location)
                             (<= start hash-lang-last-location))
-                    
-                    (unless timer
-                      (set! timer (new logging-timer%
-                                       [notify-callback
-                                        (λ ()
-                                          (when in-module-language?
-                                            (move-to-new-language)))]
-                                       [just-once? #t])))
-                    (send timer stop)
-                    (send timer start 200 #t))))))
+
+                    (cond
+                      [(and start
+                            hash-lang-last-location
+                            hash-lang-comment-end-position
+                            (<= start hash-lang-comment-end-position))
+                       (define prt (open-input-text-editor this))
+                       (port-count-lines! prt)
+                       (skip-past-comments prt)
+                       (define-values (_1 _2 current-end-of-comments+1) (port-next-location prt))
+                       (unless (= hash-lang-comment-end-position (- current-end-of-comments+1 1))
+                         (start-the-move-to-new-language-timer))]
+                      [else
+                       (start-the-move-to-new-language-timer)]))))))
 
       (define/private (update-in-module-language? new-one)
         (unless (equal? new-one in-module-language?)
@@ -293,7 +454,7 @@
              (move-to-new-language)]
             [else
              (set! hash-lang-language #f)
-             (set! hash-lang-last-location #f)
+             (set-hash-lang-comment-end+last-location #f #f)
              (clear-things-out)])))
 
       (define/public (move-to-new-language [flush-irl-cache? #f])
@@ -301,21 +462,26 @@
         (send (get-tab) set-hash-lang-error-state #f)
         (define port (open-input-text-editor this))
         (reset-irl! the-irl port (get-irl-directory) flush-irl-cache?)
-        (define-values (lang-name-start lang-name-end)
-          (get-read-language-port-start+end the-irl))
-        (set! hash-lang-language (and lang-name-end (get-text lang-name-start lang-name-end)))
+        (set!-values (hash-lang-comment-end-position hash-lang-last-location)
+                     (get-read-language-port-start+end the-irl))
+        (set! hash-lang-language (and hash-lang-last-location
+                                      (get-text hash-lang-comment-end-position hash-lang-last-location)))
         (when hash-lang-language
           (preferences:set 'drracket:most-recent-lang-line (string-append hash-lang-language
                                                                           "\n")))
-        (set! hash-lang-last-location (get-read-language-last-position the-irl))
+        (unless hash-lang-last-location
+          (set-hash-lang-comment-end+last-location (get-read-language-last-position the-irl) 0))
         
         (clear-things-out)
 
         (define mode (or (get-definitions-text-surrogate the-irl)
-                         (new racket:text-mode%)))
+                         (new racket:text-mode% [include-paren-keymap? #f])))
         (send mode set-get-token (get-insulated-module-lexer the-irl))
+        (define paren-matches
+          (call-read-language the-irl 'drracket:paren-matches racket:default-paren-matches))
+        (send mode set-matches paren-matches)
         (set-surrogate mode)
-        
+
         (define lang-wants-big-defs/ints-labels?
           (and (call-read-language the-irl 'drracket:show-big-defs/ints-labels #f)
                #t))
@@ -334,6 +500,12 @@
         (set! indentation-function
               (or (call-read-language the-irl 'drracket:indentation #f)
                   (λ (x y) #f)))
+        (set! range-indentation-function
+              (or (call-read-language the-irl 'drracket:range-indentation #f)
+                  (λ (x y z) #f)))
+        (set! grouping-position
+              (or (call-read-language the-irl 'drracket:grouping-position #f)
+                  default-grouping-position))
 
         (set! lang-keymap (new keymap:aug-keymap%))
         (for ([key+proc (in-list (call-read-language the-irl 'drracket:keystrokes '()))])
@@ -350,6 +522,11 @@
                 [else name])))
           (send lang-keymap add-function name proc)
           (send lang-keymap map-function key name))
+        (send lang-keymap chain-to-keymap
+              (make-paren-matches-keymap
+               paren-matches
+               (call-read-language the-irl 'drracket:quote-matches (list #\" #\|)))
+              #t)
         (send (get-keymap) chain-to-keymap lang-keymap #t)
 
         (register-new-buttons
@@ -361,18 +538,28 @@
            (and drracket-opt-out drscheme-opt-out
                 (append drracket-opt-out drscheme-opt-out)))
 
-         (call-read-language the-irl 'drracket:opt-in-toolbar-buttons '())))
+         (call-read-language the-irl 'drracket:opt-in-toolbar-buttons '()))
+
+        (define frame (send (get-tab) get-frame))
+        (when (eq? (send (send frame get-current-tab) get-defs) this)
+          (send frame when-initialized
+                (λ ()
+                  (send frame update-comment-out-menu-items)
+                  (send frame update-func-defs)))))
 
       ;; removes language-specific customizations
       (define/private (clear-things-out)
         (define tab (get-tab))
         (define ints (send tab get-ints))
         (set-surrogate (new racket:text-mode%))
+        (send ints set-surrogate (new racket:text-mode%))
         (set-lang-wants-big-defs/ints-labels? #f)
         (send ints set-lang-wants-big-defs/ints-labels? #f)
         (set! extra-default-filters '())
         (set! default-extension "")
         (set! indentation-function (λ (x y) #f))
+        (set! range-indentation-function (λ (x y z) #f))
+        (set! grouping-position default-grouping-position)
         (when lang-keymap
           (send (get-keymap) remove-chained-keymap lang-keymap)
           (set! lang-keymap #f))
@@ -446,10 +633,10 @@
         (cond
           [(zero? pos) '<<unknown>>]
           [else
-           (let ([str (get-text 0 pos)])
-             (if (char-whitespace? (string-ref str (- (string-length str) 1)))
-                 (substring str 0 (- (string-length str) 1))
-                 str))]))
+           (define str (get-text 0 pos))
+           (if (char-whitespace? (string-ref str (- (string-length str) 1)))
+               (substring str 0 (- (string-length str) 1))
+               str)]))
       
       
       ;; online-expansion-monitor-table : hash[(cons mod-path id) -o> (cons/c local-pc remote-pc)]
@@ -484,11 +671,18 @@
       (define extra-default-filters '())
       (define default-extension "")
       (define indentation-function (λ (x y) #f))
+      (define/public (get-indentation-function) indentation-function)
+      (define range-indentation-function (λ (x y z) #f))
+      (define/public (get-range-indentation-function) range-indentation-function)
+      (define grouping-position default-grouping-position)
       (define lang-keymap #f)
       (define/public (with-language-specific-default-extensions-and-filters t)
         (parameterize ([finder:default-extension default-extension]
                        [finder:default-filters 
-                        (append extra-default-filters (finder:default-filters))])
+                        (append extra-default-filters
+                                (move-extension-first
+                                 default-extension
+                                 (finder:default-filters)))])
           (t)))
 
       (inherit compute-racket-amount-to-indent)
@@ -499,7 +693,34 @@
                (compute-racket-amount-to-indent pos))]
           [else
            (compute-racket-amount-to-indent pos)]))
-      
+
+      (define/override (tabify-selection [start (get-start-position)]
+                                         [end (get-end-position)])
+        (unless (and in-module-language?
+                     (range-indent range-indentation-function start end))
+          (super tabify-selection start end)))
+
+      (define/override (tabify-all)
+        (unless (and in-module-language?
+                     (range-indent range-indentation-function 0 (last-position)))
+          (super tabify-all)))
+
+      (define/override (find-up-sexp start-pos)
+        (*-sexp start-pos 'up (λ () (super find-up-sexp start-pos))))
+      (define/override (find-down-sexp start-pos)
+        (*-sexp start-pos 'down (λ () (super find-down-sexp start-pos))))
+      (define/override (get-backward-sexp start-pos)
+        (*-sexp start-pos 'backward (λ () (super get-backward-sexp start-pos))))
+      (define/override (get-forward-sexp start-pos)
+        (*-sexp start-pos 'forward (λ () (super get-forward-sexp start-pos))))
+
+      (inherit get-limit)
+      (define/private (*-sexp start-pos direction do-super)
+        (define irl-answer (grouping-position this start-pos (get-limit start-pos) direction))
+        (cond
+          [(equal? irl-answer #t) (do-super)]
+          [else irl-answer]))
+
       (define/private (get-irl-directory)
         (define tmp-b (box #f))
         (define fn (get-filename tmp-b))
@@ -514,7 +735,49 @@
       (set! in-module-language? 
             (is-a? (drracket:language-configuration:language-settings-language (get-next-settings))
                    drracket:module-language:module-language<%>))))
-  
+
+  ;; all calls to `capability-value` should go through
+  ;; `call-capability-value` so that the module language
+  ;; can have access to the irl so that customizations
+  ;; that are #lang-line specific can be done
+  (define capability-value-irl (make-parameter #f))
+  (define (call-capability-value lang defs key)
+    (parameterize ([capability-value-irl (send defs get-irl)])
+      (send lang capability-value key)))
+
+  (define paren-matches-keymaps (make-hash))
+  (define (make-paren-matches-keymap paren-matches quote-matches)
+    (define keymap-cache-key (cons paren-matches quote-matches))
+    (cond
+      [(hash-ref paren-matches-keymaps keymap-cache-key #f) => car]
+      [else
+       (define keymap (new keymap:aug-keymap%))
+       (define alt-as-meta-keymap (new keymap:aug-keymap%))
+       (for ([paren-match (in-list paren-matches)])
+         (define open-str (symbol->string (list-ref paren-match 0)))
+         (define close-str (symbol->string (list-ref paren-match 1)))
+         (when (and (= 1 (string-length open-str)) (= 1 (string-length close-str)))
+           (racket:map-pairs-keybinding-functions keymap (string-ref open-str 0) (string-ref close-str 0)
+                                                  #:alt-as-meta-keymap alt-as-meta-keymap)))
+       (for ([c (in-list quote-matches)])
+         (racket:map-pairs-keybinding-functions keymap c c))
+       (when (> (hash-count paren-matches-keymaps) 20)
+         (set! paren-matches-keymaps (make-hash)))
+       (hash-set! paren-matches-keymaps keymap-cache-key (list keymap alt-as-meta-keymap))
+       (when (preferences:get 'framework:alt-as-meta)
+         (send keymap chain-to-keymap alt-as-meta-keymap #f))
+       keymap]))
+
+  (define (adjust-alt-as-meta on?)
+    (for ([(_ keymap+alt-as-meta-keymap) (in-hash paren-matches-keymaps)])
+      (define-values (keymap alt-as-meta-keymap) (apply values keymap+alt-as-meta-keymap))
+      (send keymap remove-chained-keymap alt-as-meta-keymap)
+      (when on?
+        (send keymap chain-to-keymap alt-as-meta-keymap #f))))
+  (preferences:add-callback 'framework:alt-as-meta
+                            (λ (p v) (adjust-alt-as-meta v)))
+
+  (define (default-grouping-position text start limit dir) #t)
   
   (define no-more-online-expansion-handlers? #f)
   (define (no-more-online-expansion-handlers) (set! no-more-online-expansion-handlers? #t))
@@ -571,3 +834,59 @@
     (define online-expansion-prefs '())
   (define (register-online-expansion-pref func)
     (set! online-expansion-pref-funcs (cons func online-expansion-pref-funcs))))
+
+
+;; If "rhm" is the default extension, move "*.rhm" to the start of
+;; a pattern that matches that extension so that it's the default for
+;; saving a file in Windows
+(define (move-extension-first ext filters)
+  (define rx (regexp (string-append "(?:^|;)[*][.]" ext "(?:$|;)")))
+  (map (lambda (p)
+         (define exts (cadr p))
+         (define m (regexp-match-positions rx exts))
+         (if m
+             (list (car p)
+                   (string-append (string-append "*." ext)
+                                  (if (or ((caar m) . > . 0)
+                                          ((cdar m) . < . (string-length exts)))
+                                      ";"
+                                      "")
+                                  (substring exts 0 (caar m))
+                                  (if (and ((caar m) . > . 0)
+                                           ((cdar m) . < . (string-length exts)))
+                                      ";"
+                                      "")
+                                  (substring exts (cdar m))))
+             p))
+       filters))
+(module+ test
+  (check-equal?
+   (move-extension-first
+    "rhm"
+    '(("Racket Sources" "*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+   '(("Racket Sources" "*.rhm;*.rkt;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+  (check-equal?
+   (move-extension-first
+    ""
+    '(("Racket Sources" "*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+   '(("Racket Sources" "*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+  (check-equal?
+   (move-extension-first
+    "rkt"
+    '(("Racket Sources" "*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+   '(("Racket Sources" "*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+  (check-equal?
+   (move-extension-first
+    "ss"
+    '(("Racket Sources" "*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+   '(("Racket Sources" "*.ss;*.rkt;*.rhm;*.scm;*.scrbl;*.rktd;*.rktl") ("Any" "*.*")))
+  (check-equal?
+   (move-extension-first
+    "rktd"
+    '(("Racket Sources" "*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+   '(("Racket Sources" "*.rktd;*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktl") ("Any" "*.*")))
+  (check-equal?
+   (move-extension-first
+    "rktl"
+    '(("Racket Sources" "*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd;*.rktl") ("Any" "*.*")))
+   '(("Racket Sources" "*.rktl;*.rkt;*.rhm;*.scm;*.scrbl;*.ss;*.rktd") ("Any" "*.*"))))

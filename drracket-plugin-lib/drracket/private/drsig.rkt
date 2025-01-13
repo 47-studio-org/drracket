@@ -11,6 +11,7 @@
          drracket:get-collection^
          drracket:main^
          drracket:init^
+         drracket:init/int^
          drracket:language-configuration^
          drracket:language-configuration/internal^
          drracket:tools^
@@ -81,6 +82,7 @@
    add-prefs-panel
    
    get-error-color
+   get-error-color-name
    
    hide-backtrace-window
    show-backtrace-window
@@ -124,7 +126,9 @@
    modes-mixin
    drracket-determined-width
 
-   error-message%))
+   error-message%
+
+   disable-debugging-et-al))
 
 (define-signature drracket:module-language-tools-cm^
   (frame-mixin
@@ -144,7 +148,10 @@
   (get-online-expansion-pref-funcs
    (struct online-expansion-handler (mod-path id local-handler monitor?))
    get-online-expansion-handlers
-   no-more-online-expansion-handlers))
+   no-more-online-expansion-handlers
+   interactions-text-mixin
+   call-capability-value
+   capability-value-irl))
 
 (define-signature drracket:get-collection-cm^ ())
 (define-signature drracket:get-collection^ extends drracket:get-collection-cm^
@@ -156,9 +163,10 @@
 (define-signature drracket:init-cm^
   ())
 (define-signature drracket:init^ extends drracket:init-cm^
+  (original-error-display-handler))
+(define-signature drracket:init/int^ extends drracket:init^
   (original-output-port
    original-error-port
-   original-error-display-handler
    original-print
    primitive-eval
    primitive-load
@@ -234,6 +242,7 @@
    interactions-canvas%))
 (define-signature drracket:unit^ extends drracket:unit-cm^
   (open-drscheme-window
+   create-new-drscheme-frame
    find-symbol
    get-program-editor-mixin
    add-to-program-editor-mixin
@@ -429,6 +438,7 @@
 (define-signature no-prefix:tool^ 
   ((open (prefix debug: drracket:debug^))
    (open (prefix unit: drracket:unit^))
+   (open (prefix init: drracket:init^))
    (open (prefix rep: drracket:rep^))
    (open (prefix frame: drracket:frame^))
    (open (prefix get/extend: drracket:get/extend^))

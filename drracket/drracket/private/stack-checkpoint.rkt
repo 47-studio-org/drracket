@@ -1,5 +1,5 @@
 #lang racket/base
-(require errortrace/errortrace-key
+(require "drracket-errortrace-key.rkt"
          racket/class
          racket/contract
          racket/gui/base
@@ -121,16 +121,17 @@
   (define test-suite-filename (syntax-source #'here))
 
   (let ()
-    (define (a x) (+ (f x)))
+    (define (non-tail-context x) x)
+    (define (a x) (non-tail-context (f x)))
     (set! a a)
 
-    (define (f x) (+ (g x)))
+    (define (f x) (non-tail-context (g x)))
     (set! f f)
 
-    (define (g x) (with-stack-checkpoint (+ (h x))))
+    (define (g x) (with-stack-checkpoint (non-tail-context (h x))))
     (set! g g)
 
-    (define (h x) (+ (i x)))
+    (define (h x) (non-tail-context (i x)))
     (set! h h)
 
     (define (i x)
@@ -170,7 +171,7 @@
 
 (define (cms->errortrace-viewable-stack cms interesting-editors
                                         #:share-cache [a-viewable-stack #f])
-  (build-viewable-stack (continuation-mark-set->list cms errortrace-key)
+  (build-viewable-stack (continuation-mark-set->list cms drracket-errortrace-key)
                         errortrace-stack-item->srcloc
                         interesting-editors
                         a-viewable-stack))

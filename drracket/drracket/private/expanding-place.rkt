@@ -13,7 +13,7 @@
 
 (provide start)
 
-(struct exn-info (str src-vecs exn-stack missing-mods) #:prefab)
+(struct exn-info (str full-str src-vecs exn-stack missing-mods) #:prefab)
 
 (struct job (cust working-thd stop-watching-abnormal-termination))
 
@@ -45,7 +45,8 @@
   (set! module-language-parallel-lock-client
         (compile-lock->parallel-lock-client
          (place-channel-get p)
-         (current-custodian)))
+         (current-custodian)
+         current-parallel-lock-shutdown-evt))
   
   ;; get the handlers in a second message
   (set! handlers 
@@ -286,9 +287,15 @@
                    no-io-happened?)
               (define compiled (compile expanded))
               (define bp (open-output-bytes))
-              (parameterize ([current-write-relative-directory (current-directory)])
-                (write compiled bp))
-              (get-output-bytes bp)]
+              (define write-succeeded?
+                (parameterize ([current-write-relative-directory (current-directory)])
+                  (with-handlers ([(λ (x) (and (exn:fail? x)
+                                               (regexp-match? #rx"write: cannot marshal value that is embedded in compiled code"
+                                                              (exn-message x))))
+                                   (λ (x) #f)])
+                    (write compiled bp)
+                    #t)))
+              (and write-succeeded? (get-output-bytes bp))]
              [else #f]))
          (ep-log-info "expanding-place.rkt: 13 compile finished")
          
@@ -393,8 +400,11 @@
                (exn-info 
                 (trim-message
                  (if (exn? an-exn) 
-                     (regexp-replace* #rx"[ \t]*\n[ \t]*" (exn-message an-exn) " ") 
+                     (regexp-replace* #rx"[ \t]*\n[ \t]*" (exn-message an-exn) " ")
                      (format "uncaught exn: ~s" an-exn)))
+                (if (exn? an-exn)
+                    (exn-message an-exn)
+                    (format "uncaught exn: ~s" an-exn))
                 (cond
                   [(exn:srclocs? an-exn)
                    (sort
@@ -416,20 +426,21 @@
                      [info (list info)]
                      [else '()])]
                   [else '()])
-                (if (exn? an-exn)
-                    (let ([ctxt 
-                           (continuation-mark-set->context
-                            (exn-continuation-marks an-exn))])
-                      (for/list ([ctxt-elem (if (< (length ctxt) 100)
-                                                ctxt
-                                                (take ctxt 100))])
-                        (define name (car ctxt-elem))
-                        (define loc (cdr ctxt-elem))
-                        (cond
-                          [(not name) (format-srcloc loc)]
-                          [(not loc) (format "~a" name)]
-                          [else (format "~a:~a" (format-srcloc loc) name)])))
-                    '())
+                (cond
+                  [(exn? an-exn)
+                   (define ctxt 
+                     (continuation-mark-set->context
+                      (exn-continuation-marks an-exn)))
+                   (for/list ([ctxt-elem (if (< (length ctxt) 100)
+                                             ctxt
+                                             (take ctxt 100))])
+                     (define name (car ctxt-elem))
+                     (define loc (cdr ctxt-elem))
+                     (cond
+                       [(not name) (format-srcloc loc)]
+                       [(not loc) (format "~a" name)]
+                       [else (format "~a:~a" (format-srcloc loc) name)]))]
+                  [else '()])
                 (and (exn:missing-module? an-exn)
                      ((exn:missing-module-accessor an-exn) an-exn)))))
            (place-channel-put 
@@ -554,4 +565,5 @@
 (define profiling-enabled (make-parameter #f))
 (define (register-profile-start key) (void))
 (define (register-profile-done key start) (void))
-(define-values/invoke-unit/infer stacktrace/errortrace-annotate@)
+(define key-module-name 'drracket/private/drracket-errortrace-key)
+(define-values/invoke-unit/infer stacktrace/errortrace-annotate/key-module-name@)

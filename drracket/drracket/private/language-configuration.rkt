@@ -21,6 +21,7 @@
          syntax/toplevel
          browser/external
          mrlib/panel-wob
+         lang/htdp-langs-save-file-prefix
          (only-in mzlib/struct make-->vector)
 
          ;; ensure that this module is always loaded since it is shared below for pretty big
@@ -66,7 +67,7 @@
   (define-unit language-configuration@
     (import [prefix drracket:unit: drracket:unit^]
             [prefix drracket:rep: drracket:rep^]
-            [prefix drracket:init: drracket:init^]
+            [prefix drracket:init: drracket:init/int^]
             [prefix drracket:language: drracket:language/int^]
             [prefix drracket:app: drracket:app^]
             [prefix drracket:tools: drracket:tools^]
@@ -2015,8 +2016,8 @@
           (super on-execute setting run-in-user-thread)
           (run-in-user-thread
            (λ ()
-             (namespace-require 'errortrace/errortrace-key)
-             (namespace-require '(for-syntax errortrace/errortrace-key)))))
+             (namespace-require 'drracket/private/drracket-errortrace-key)
+             (namespace-require '(for-syntax drracket/private/drracket-errortrace-key)))))
         (super-new)))
   
     (define (r5rs-mixin %)
@@ -2347,9 +2348,9 @@
                       (find-relevant-directories '(textbook-pls get-textbook-pls))))
           (λ (x y)
             (cond
-              [(string=? (cadr x) (string-constant how-to-design-programs))
+              [(string=? (cadr x) |How to Design Programs|)
                #t]
-              [(string=? (string-constant how-to-design-programs) (cadr y))
+              [(string=? |How to Design Programs| (cadr y))
                #f]
               [else
                (string<=? (cadr x) (cadr y))])))))
@@ -2442,7 +2443,7 @@
                              (send the-color-database find-color "lightgray")
                              (send the-color-database find-color "black"))))
                (send dc set-font font)
-               (send dc draw-text label 0 0 #t)
+               (send dc draw-text label 0 0 'grapheme)
                (send dc set-font old-font)
                (send dc set-text-foreground old-tf)]
               [(is-a? label bitmap%)
@@ -2458,7 +2459,7 @@
           (inherit min-width min-height get-dc)
           (cond
             [(string? label)
-             (define-values (w h _1 _2) (send (get-dc) get-text-extent label font #t))
+             (define-values (w h _1 _2) (send (get-dc) get-text-extent label font 'grapheme))
              (min-width (inexact->exact (ceiling w)))
              (min-height (inexact->exact (ceiling h)))]
             [(is-a? label bitmap%)

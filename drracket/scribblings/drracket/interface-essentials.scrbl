@@ -214,16 +214,19 @@ on the languages that DrRacket supports.
 @section[#:tag "editor"]{Editing with Parentheses}
 
 @index['("flashing parenthesis matches")]{@index['("gray highlight
-regions")]{In}} Racket mode, especially, DrRacket's editor provides
+regions")]{DrRacket's editor provides}}
 special support for managing parentheses in a program. When the
 blinking caret is next to a parenthesis, DrRacket shades the region
 between the parenthesis and its matching parenthesis. This feature is
 especially helpful when balancing parentheses to complete an
-expression.
+expression. DrRacket also has a highlighting mode that uses
+shading for nested parentheses, described in
+@secref["sec:colors"].
+
 
 @index['("formatting Racket code")]{@index['("indenting Racket
-code")]{Although}} whitespace is not significant in Racket, DrRacket
-encourages a particular format for Racket code. When you type Enter or
+code")]{DrRacket}} also
+encourages a particular format for code in a language-specific manner. When you type Enter or
 Return, the editor inserts a new line and automatically indents it. To
 make DrRacket re-indent an existing line, move the blinking caret to
 the line and hit the Tab key. (The caret can be anywhere in the line.)
@@ -271,8 +274,8 @@ parenthesis. For example, when typing
 @racketblock[
 (define (length l)
   (cond
-   [(empty? l) 0]
-   [else (+ 1 (length (rest l)))]))
+    [(empty? l) 0]
+    [else (+ 1 (length (rest l)))]))
 ]
 
 If you always type @litchar{[} and @litchar{]} where any of the square
@@ -744,7 +747,9 @@ file cannot be included in another debugging session.
 The module browser shows you the structure of all of the files in your program.
 It can be opened via the @onscreen{Show} menu, or via the 
 @onscreen{Module Browser} 
-menu items in the @onscreen{Racket} menu.
+menu items in the @onscreen{Racket} menu. It is also available
+from the command-line via @index["raco dependencies-graph"]{@tt{raco}
+ @tt{dependencies-graph}}.
 
 A module browser window contains a square for each
   module. The squares are colored based on the number of
@@ -752,25 +757,42 @@ A module browser window contains a square for each
   code, it gets a darker color. If a module is red, it means
   that DrRacket did not find a source file for it.
   
-  In addition, for each normal import, a blue line drawn is
-  from the module to the importing module. Similarly, purple
-  lines are drawn for each for-syntax, for-template or for-meta import. In the initial
-  module layout, modules to the left import modules to the
-  right, but since modules can be moved around
-  interactively, that property might not be preserved.
+In addition, for each normal import, a blue line drawn is
+from the module to the importing module. Similarly, purple
+lines are drawn for each for-syntax, for-template or
+for-meta import. In the initial module layout in the
+standalone module browser window, modules to the left import
+modules to the right. When the winow is embedded in the
+DrRacket window, module above import those below. (Since
+modules can be moved around interactively, that property
+might not be preserved.)
 
-  To open the file corresponding to the module, double click
-  on the box for that module.
+To open the file corresponding to the module, double click
+on the box for that module.
   
-  The module browser will also show you the phases that each
-  module is loaded in; choose the ``Long, with phases'' menu item
-  in the ``Names'' pop-up menu. The integers indicate the phases and
-  if @racket[#f] is present, it means the module is loaded @racket[for-label].
+The module browser will also show you the phases that each
+module is loaded in; choose the @onscreen{Long, with phases}
+menu item in the @onscreen{Names} pop-up menu. The integers
+indicate the phases and if @racket[#f] is present, it means
+the module is loaded @racket[for-label].
   
-  The bar along the bottom helps you find your way in a module graph. Specifically,
-  if you type something there, then all of the modules whose filenames match
-  what you type will turn green in the module window. This bar is only visible
-  in the stand alone module browser window (via the @onscreen{Racket} menu)
+In the standalone window view, there is a bar along the
+bottom that helps you find your way in a module graph.
+Specifically, if you type something there, then all of the
+modules whose filenames match what you type will turn green
+in the module window. This bar is only visible in the stand
+alone module browser window (via the @onscreen{Racket}
+menu or @tt{raco} @tt{depedencies-graph}).
+
+The @onscreen{Visible Packages} menu controls which subset
+of the modules are visible. To start, all of the modules in
+the same package as the package of the initial file are
+shown.
+
+The @onscreen{Visible Submodules} menu also controls which
+subset of the modules are visible. To start, all of the
+modules that are not submodules are shown. Use this menu to
+add in additional submodules.
 
 @section[#:tag "color-scheme"]{Color Schemes}
 
@@ -778,7 +800,7 @@ DrRacket comes with a selection of color schemes, available in the preferences d
 @onscreen{color} panel.
 
 You can add your own color schemes to DrRacket, too. The first step is to
-create a pkg (see @secref["how-to-create" #:doc '(lib "pkg/scribblings/pkg.scrbl")])
+create a package (see @secref["how-to-create" #:doc '(lib "pkg/scribblings/pkg.scrbl")])
 and add an @filepath{info.rkt} file to it. The file should define
 @racket[framework:color-schemes] as a list of hashes that describe the color schemes.
 
@@ -827,15 +849,15 @@ As an example, this is the specification of the @racket["Modern"] style:
     (string-append "#lang info\n"
                    (get-output-string sp))))
 
-Each of the keys, e.g., @code[(format "'~s" example-key)], maps to a color and possibly to
+Each of the keys, e.g., @racketvalfont[(format "'~s" example-key)], maps to a color and possibly to
 some style information. All keys accept colors (the vectors shown
-above represent colors in r/g/b format), but only some accept style information. To
+above represent colors in red--green--blue format), but only some accept style information. To
 find out which are which and to get a complete list of the possible keys, click the button
 labeled @onscreen[(regexp-replace #rx"&&" (string-constant style-and-color-names) "\\&")]
 at the bottom of the 
 @onscreen[(string-constant color-schemes)] tab of the
 @onscreen[(string-constant preferences-colors)] tab in the preferences dialog.
-If one can accept style information, then you may include any of the symbols @racket['bold],
+If one can accept style information, then you may include any of @racket['bold],
 @racket['underline], @racket['italic] or @racket[`#s(background ,_color)] in the list with the color.
 
 Full details on the specification of the info files can be found in the documentation

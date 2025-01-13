@@ -21,6 +21,7 @@
          net/url
          
          drracket/private/drsig
+         drracket/private/standalone-module-browser
          "insulated-read-language.rkt"
          "insert-large-letters.rkt"
          "get-defs.rkt"
@@ -29,6 +30,7 @@
          "parse-logger-args.rkt"
          drracket/get-module-path
          "named-undefined.rkt"
+         (prefix-in pict-snip: "pict-snip.rkt")
          (prefix-in drracket:arrow: "../arrow.rkt")
          (prefix-in icons: images/compile-time)
          mred
@@ -51,9 +53,8 @@
 
 (define module-browser-progress-constant (string-constant module-browser-progress))
 (define status-compiling-definitions (string-constant module-browser-compiling-defns))
-(define show-lib-paths (string-constant module-browser-show-lib-paths/short))
 (define show-planet-paths (string-constant module-browser-show-planet-paths/short))
-(define refresh (string-constant module-browser-refresh))
+(define module-browser-refresh (string-constant module-browser-refresh))
 
 (define oprintf
   (let ([op (current-output-port)])
@@ -115,9 +116,9 @@
           [prefix drracket:get/extend: drracket:get/extend^]
           [prefix drracket:module-overview: drracket:module-overview^]
           [prefix drracket:tools: drracket:tools^]
-          [prefix drracket:init: drracket:init^]
+          [prefix drracket:init: drracket:init/int^]
           [prefix drracket:module-language: drracket:module-language/int^]
-          [prefix drracket:module-language-tools: drracket:module-language-tools^]
+          [prefix drracket:module-language-tools: drracket:module-language-tools/int^]
           [prefix drracket:modes: drracket:modes^]
           [prefix drracket:debug: drracket:debug^]
           [prefix drracket: drracket:interface^])
@@ -165,7 +166,8 @@
                  (let ([snip (send text find-snip pos 'after-or-none)])
                    (when (or (is-a? snip image-snip%)
                              (is-a? snip image-core:image%)
-                             (is-a? snip cache-image-snip%))
+                             (is-a? snip cache-image-snip%)
+                             (is-a? snip pict-snip:pict-snip%))
                      (add-sep)
                      (define (save-image-callback _1 _2)
                        (define fn
@@ -178,7 +180,8 @@
                            [kind
                             (cond
                               [(or (is-a? snip image-snip%)
-                                   (is-a? snip cache-image-snip%))
+                                   (is-a? snip cache-image-snip%)
+                                   (is-a? snip pict-snip:pict-snip%))
                                (send (send snip get-bitmap) save-file fn kind)]
                               [else
                                (image-core:save-image-as-bitmap snip fn kind)])]
@@ -207,7 +210,13 @@
                [l (and l (is-a? l drracket:unit:frame<%>) (send l get-definitions-text))]
                [l (and l (send l get-next-settings))]
                [l (and l (drracket:language-configuration:language-settings-language l))]
-               [ctxt (and l (send l capability-value 'drscheme:help-context-term))]
+               [ctxt (and l
+                          (drracket:module-language-tools:call-capability-value
+                           l
+                           (if (is-a? text drracket:rep:text%)
+                               (send text get-definitions-text)
+                               text)
+                           'drscheme:help-context-term))]
                [name (and l (send l get-language-name))])
           (unless (string=? str "")
             (add-sep)
@@ -536,22 +545,23 @@
   (define (make-definitions-text%)
     (let ([definitions-super%
             (text:line-numbers-mixin
-             (text:first-line-mixin
-              (drracket:module-language:module-language-put-file-mixin
-               (racket:text-mixin
-                (color:text-mixin
-                 (drracket:rep:drs-bindings-keymap-mixin
-                  (mode:host-text-mixin
-                   (text:foreground-color-mixin
-                    (drracket:rep:drs-autocomplete-mixin
-                     (λ (x) x)
-                     (text:normalize-paste-mixin
-                      (text:column-guide-mixin
-                       (text:inline-overview-mixin
-                        (text:all-string-snips-mixin
-                         (text:ascii-art-enlarge-boxes-mixin
-                          (number-snip:remove-decimal-looking-number-snips-on-insertion-mixin
-                           text:info%)))))))))))))))])
+             (text:indent-guides-mixin
+              (text:first-line-mixin
+               (drracket:module-language:module-language-put-file-mixin
+                (racket:text-mixin
+                 (color:text-mixin
+                  (drracket:rep:drs-bindings-keymap-mixin
+                   (mode:host-text-mixin
+                    (text:foreground-color-mixin
+                     (drracket:rep:drs-autocomplete-mixin
+                      (λ (x) x)
+                      (text:normalize-paste-mixin
+                       (text:column-guide-mixin
+                        (text:inline-overview-mixin
+                         (text:all-string-snips-mixin
+                          (text:ascii-art-enlarge-boxes-mixin
+                           (number-snip:remove-decimal-looking-number-snips-on-insertion-mixin
+                            text:info%))))))))))))))))])
        ((get-program-editor-mixin)
         (class* definitions-super% (drracket:unit:definitions-text<%>)
           (inherit is-locked? lock while-unlocked
@@ -940,6 +950,9 @@
           (inherit set-inline-overview-enabled?)
           (set-inline-overview-enabled? (preferences:get 'drracket:inline-overview-shown?))
 
+          (inherit show-indent-guides!)
+          (show-indent-guides! (preferences:get 'drracket:show-indent-guides?))
+
           (inherit set-file-creator-and-type)
           (set-file-creator-and-type #"DrSc" #f)))))
 
@@ -1009,7 +1022,10 @@
                                    language-settings)]
                     [capability-info
                      (get-define-popup-info
-                      (send new-language capability-value 'drscheme:define-popup))])
+                      (drracket:module-language-tools:call-capability-value
+                       new-language
+                       (send frame get-definitions-text)
+                       'drscheme:define-popup))])
                (when capability-info
                  (let* ([current-pos (get-pos editor event)]
                         [current-word (and current-pos (get-current-word editor current-pos))]
@@ -1073,7 +1089,12 @@
       (define/public (language-changed new-language vertical?)
         (set! define-popup-capability-info
               (get-define-popup-info
-               (send new-language capability-value 'drscheme:define-popup)))
+               (drracket:module-language-tools:call-capability-value
+                new-language
+                (send frame get-definitions-text)
+                'drscheme:define-popup)))
+        (set-message-at-orientation vertical?))
+      (define/public (set-message-at-orientation vertical?)
         (define define-name
           (get-define-popup-name define-popup-capability-info
                                  vertical?))
@@ -1329,8 +1350,8 @@
                  (not custodian-to-kill))
              (bell)]
             [do-kill?
-             (when custodian-to-kill
-               (custodian-shutdown-all custodian-to-kill))
+             ;; this transitively shuts down custodian-to-kill too
+             (send ints kill-evaluation)
              (set! do-kill? #f)
              (send (get-frame) update-kill-button-label)]
             [else
@@ -2052,15 +2073,8 @@
                       (append (remq top-outer-panel l) (list top-outer-panel)))))
           (send top-outer-panel change-children (λ (l) (list top-panel)))
           (send transcript-parent-panel change-children (λ (l) (list transcript-panel)))
-          
-          (let* ([settings (send definitions-text get-next-settings)]
-                 [language (drracket:language-configuration:language-settings-language settings)]
-                 [name (get-define-popup-name
-                        (get-define-popup-info
-                         (send language capability-value 'drscheme:define-popup))
-                        vertical?)])
-            (when name
-              (send func-defs-canvas set-message #f name)))
+
+          (send func-defs-canvas set-message-at-orientation vertical?)
           (send name-message set-short-title vertical?)
           (send name-panel set-orientation (not vertical?))
           (if vertical?
@@ -2243,8 +2257,7 @@
       (define/public (language-changed)
         (define settings (send definitions-text get-next-settings))
         (define language (drracket:language-configuration:language-settings-language settings))
-        (send func-defs-canvas language-changed language (or (toolbar-is-left?)
-                                                             (toolbar-is-right?)))
+        (update-func-defs)
         (send language-message set-yellow/lang
               (not (send definitions-text this-and-next-language-the-same?))
               (string-append (send language get-language-name)
@@ -2252,16 +2265,25 @@
                                        (drracket:language-configuration:language-settings-settings
                                         settings))
                                  ""
-                                 (string-append " " (string-constant custom)))
+                                 (string-append " [" (string-constant custom) "]"))
                              " "))
         (update-teachpack-menu)
+        (update-comment-out-menu-items)
         (when (is-a? language-specific-menu menu%)
           (define label (send language-specific-menu get-label))
-          (define new-label (send language capability-value 'drscheme:language-menu-title))
+          (define new-label
+            (drracket:module-language-tools:call-capability-value
+             language (get-definitions-text) 'drscheme:language-menu-title))
           (unless (equal? label new-label)
             (send language-specific-menu set-label new-label))))
       
       (define/public (get-language-menu) language-specific-menu)
+
+      (define/public (update-func-defs)
+        (define settings (send definitions-text get-next-settings))
+        (define language (drracket:language-configuration:language-settings-language settings))
+        (send func-defs-canvas language-changed language (or (toolbar-is-left?)
+                                                             (toolbar-is-right?))))
       
       ;; update-save-message : -> void
       ;; sets the save message. If input is #f, uses the frame's
@@ -2877,6 +2899,7 @@
                       (send (send tab get-defs) on-close)
                       (send (send tab get-ints) on-close)))
                   tabs)
+        (update-recently-closed-tabs tabs)
         (when (eq? this newest-frame)
           (set! newest-frame #f))
         (when transcript
@@ -2981,7 +3004,16 @@
         (let/ec k
           (for ([tab (in-list (get-unsaved-candidate-tabs #f))])
             (parameterize ([editor:silent-cancel-on-save-file-out-of-date? #t])
-              (unless (send (send tab get-defs) save-file #f 'same #f)
+              (define defs (send tab get-defs))
+              (define save-result
+                (with-handlers ([exn:fail? (λ (x) #t)])
+                  ;; catch errors during saving and discard them so
+                  ;; that we don't end up in an infinite loop of errors.
+                  ;; when this happens, the autosave will probably also
+                  ;; error, which will give the user some information
+                  ;; about what's going on here.
+                  (send defs save-file #f 'same #f)))
+              (unless save-result
                 (k (void))))))
         (update-tabs-labels))
 
@@ -3054,6 +3086,8 @@
           (send defs change-mode-to-match)
           (send defs insert-auto-text)))
       
+      (define/pubment (after-create-new-drracket-frame show?)
+        (inner (void) after-create-new-drracket-frame show?))
       
       ;                              
       ;                              
@@ -3071,36 +3105,41 @@
       ;                              
       
       (define/public (get-current-tab) current-tab)
+
+      (define/pubment (after-create-new-tab tab filename start-pos end-pos)
+        (inner (void) after-create-new-tab tab filename start-pos end-pos))
       
       ;; create-new-tab : -> void
       ;; creates a new tab and updates the GUI for that new tab
-      (define/public create-new-tab
-        (lambda ([filename #f])
-          (let* ([defs (new (drracket:get/extend:get-definitions-text))]
-                 [tab-count (length tabs)]
-                 [new-tab (new (drracket:get/extend:get-tab)
-                               (defs defs)
-                               (i tab-count)
-                               (frame this)
-                               (defs-shown? #t)
-                               (ints-shown? (not filename)))]
-                 [ints (make-object (drracket:get/extend:get-interactions-text) new-tab)])
-            (send new-tab set-ints ints)
-            (set! tabs (append tabs (list new-tab)))
-            (send tabs-panel append 
-                  (gui-utils:trim-string
-                   (if filename
-                       (get-tab-label-from-filename filename)
-                       (get-defs-tab-label defs #f))
-                   200))
-            (init-definitions-text new-tab)
-            (when filename (send defs load-file filename))
-            (send defs enable-top-level-window-connection)
-            (change-to-nth-tab (- (send tabs-panel get-number) 1))
-            (send ints initialize-console)
-            (send tabs-panel set-selection (- (send tabs-panel get-number) 1))
-            (set! newest-frame this)
-            (update-menu-bindings))))
+      (define/public (create-new-tab [filename #f] #:start-pos [start-pos 0] #:end-pos [end-pos 'same])
+        (define defs (new (drracket:get/extend:get-definitions-text)))
+        (when (start-new-tab-in-edit-sequence?) (send defs begin-edit-sequence))
+        (define tab-count (length tabs))
+        (define new-tab (new (drracket:get/extend:get-tab)
+                             (defs defs)
+                             (i tab-count)
+                             (frame this)
+                             (defs-shown? #t)
+                             (ints-shown? (not filename))))
+        (define ints (make-object (drracket:get/extend:get-interactions-text) new-tab))
+        (send new-tab set-ints ints)
+        (send (send new-tab get-defs) set-position start-pos end-pos)
+        (set! tabs (append tabs (list new-tab)))
+        (send tabs-panel append
+              (gui-utils:trim-string
+               (if filename
+                   (get-tab-label-from-filename filename)
+                   (get-defs-tab-label defs #f))
+               200))
+        (init-definitions-text new-tab)
+        (when filename (send defs load-file filename))
+        (send defs enable-top-level-window-connection)
+        (change-to-nth-tab (- (send tabs-panel get-number) 1))
+        (send ints initialize-console)
+        (send tabs-panel set-selection (- (send tabs-panel get-number) 1))
+        (set! newest-frame this)
+        (update-menu-bindings)
+        (after-create-new-tab new-tab filename start-pos end-pos))
       
       ;; change-to-tab : tab -> void
       ;; updates current-tab, definitions-text, and interactactions-text
@@ -3151,6 +3190,8 @@
             (for-each (λ (ints-canvas) (send ints-canvas refresh))
                       interactions-canvases)
             (set-color-status! (send definitions-text is-lexer-valid?))
+
+            (update-comment-out-menu-items)
             
             (when (preferences:get 'drracket:save-files-on-tab-switch?)
               (save-all-unsaved-files))
@@ -3248,6 +3289,7 @@
               (send tab set-i (- (send tab get-i) 1)))
             (set! tabs (remq tab-to-close tabs))
             (send tabs-panel delete (send tab-to-close get-i))
+            (update-recently-closed-tabs (list tab-to-close))
             (update-menu-bindings)
             (cond
               [(eq? tab-to-close current-tab)
@@ -3264,10 +3306,35 @@
            (send tab on-close)
            #t]
           [else #f]))
+
+      (define/public (open-in-new-tab filename #:start-pos [start-pos 0] #:end-pos [end-pos 'same])
+        (create-new-tab filename #:start-pos start-pos #:end-pos end-pos))
       
-      (define/public (open-in-new-tab filename)
-        (create-new-tab filename))
-      
+      ;; reopen-closed-tab : -> void
+      ;; Opens previously closed tabs. If no tabs were closed in current session, files from 
+      ;; previous sessions are opened.
+      (define/public (reopen-closed-tab)
+        (define closed-tabs (preferences:get 'drracket:recently-closed-tabs))
+        (define-values (file-to-open new-closed-tabs)
+          (let loop ([closed-tabs closed-tabs])
+            (cond
+              [(null? closed-tabs) (values #f '())]
+              [else
+               (define closed-tab (car closed-tabs))
+               (cond
+                 [(file-exists? (car closed-tab))
+                  (values closed-tab (cdr closed-tabs))]
+                 [else (loop (cdr closed-tabs))])])))
+        (when file-to-open
+          (define tab (find-matching-tab (car file-to-open)))
+          (define start-pos (cadr file-to-open))
+          (define end-pos (caddr file-to-open))
+          (if tab
+              (change-to-tab tab)
+              (open-in-new-tab (car file-to-open) #:start-pos start-pos #:end-pos end-pos)))
+        (preferences:set 'drracket:recently-closed-tabs new-closed-tabs)
+        #f)
+
       (define/public (get-tab-count) (length tabs))
       (define/public (change-to-nth-tab n)
         (unless (< n (length tabs))
@@ -3350,28 +3417,43 @@
         (with-handlers ([exn:fail? (λ (x) #f)])
           (string=? (path->string (normal-case-path (normalize-path p1)))
                     (path->string (normal-case-path (normalize-path p2))))))
-      
-      (define/override (make-visible filename)
-        (let ([tab (find-matching-tab filename)])
-          (when tab
-            (change-to-tab tab))))
+
+      (define/override (make-visible filename #:start-pos [start-pos #f] #:end-pos [end-pos start-pos])
+        (match (find-matching-tab/which-editor filename)
+          [(cons tab ed)
+           (change-to-tab tab)
+           (when (and start-pos end-pos)
+             (send (send ed get-canvas) focus)
+             (send ed set-caret-owner #f)
+             (send ed set-position start-pos end-pos))]
+          [#f (void)]))
       
       (define/public (find-matching-tab filename)
-        (define fn-path (if (string? filename)
-                            (string->path filename)
-                            filename))
-        (for/or ([tab (in-list tabs)])
-          (define tab-filename (send (send tab get-defs) get-filename))
-          (and tab-filename
-               (pathname-equal? fn-path tab-filename)
-               tab)))
-      
+        (match (find-matching-tab/which-editor filename)
+          [(cons tab ed) tab]
+          [#f #f]))
+
       (define/override (editing-this-file? filename)
-        (ormap (λ (tab)
-                 (let ([fn (send (send tab get-defs) get-filename)])
-                   (and fn
-                        (pathname-equal? fn filename))))
-               tabs))
+        (and (find-matching-tab/which-editor filename) #t))
+      
+      (define/private (find-matching-tab/which-editor path-string)
+        ;; path-string : (or/c path-string? symbol?) via make-visible, find-matching-tab, and editing-this-file?
+        ;; port-name-matches? only works for path? and symbol?, so cast filename
+        (define filename (if (string? path-string) (string->path path-string) path-string))
+        (for/or ([tab (in-list tabs)])
+          (define (try ed)
+            (and (send ed port-name-matches? filename)
+                 (cons tab ed)))
+          (or (try (send tab get-defs))
+              (try (send tab get-ints)))))
+
+      (define/override (get-all-open-files)
+        (filter
+         values
+         (for/list ([tab (in-list tabs)])
+           (define fn (send (send tab get-defs) get-filename))
+           (and fn (with-handlers ([exn:fail? (λ (x) #f)])
+                     (normalize-path fn))))))
       
       (define/override (get-menu-item%)
         (class (super get-menu-item%)
@@ -3396,7 +3478,27 @@
         (when close-tab-menu-item
           (update-close-tab-menu-item-shortcut close-tab-menu-item))
         (update-close-menu-item-shortcut (file-menu:get-close-item)))
-      
+
+      (define/private (update-recently-closed-tabs tabs)
+        (define closed-tabs (preferences:get 'drracket:recently-closed-tabs))
+        (define recently-closed-tabs-max-count (preferences:get 'drracket:recently-closed-tabs-max-count))
+        (for ([tab (in-list tabs)])
+          (define defs (send tab get-defs))
+          (define tab-filename (send defs get-filename))
+          (when tab-filename
+            (define start-pos (send defs get-start-position))
+            (define end-pos (send defs get-end-position))
+            (define new-ent (list tab-filename start-pos end-pos))
+            (set! closed-tabs
+                  (cons new-ent
+                        (remove* (list new-ent)
+                                 closed-tabs
+                                 (λ (l1 l2)
+                                   (pathname-equal? (car l1) (car l2))))))))
+        (unless (<= (length closed-tabs) recently-closed-tabs-max-count)
+          (set! closed-tabs (take closed-tabs recently-closed-tabs-max-count)))
+        (preferences:set 'drracket:recently-closed-tabs closed-tabs))
+
       (define/private (update-close-tab-menu-item-shortcut item)
         (define just-one? (and (pair? tabs) (null? (cdr tabs))))
         (send item set-label (if just-one? 
@@ -3601,6 +3703,26 @@
                                (preferences:set 'drracket:show-line-numbers? (not value))
                                (show-line-numbers! (not value)))]))
         (set-show-menu-sort-key show-line-numbers-menu-item 302)
+
+        (define indent-guides-menu-item
+          (new menu:can-restore-menu-item%
+               [label (if (send (get-definitions-text) show-indent-guides?)
+                          (string-constant hide-indent-guides/menu)
+                          (string-constant show-indent-guides/menu))]
+               [parent (get-show-menu)]
+               [shortcut #\i]
+               [shortcut-prefix (cons 'shift (get-default-shortcut-prefix))]
+               [demand-callback
+                (λ (item)
+                  (send item set-label
+                        (if (send (get-definitions-text) show-indent-guides?)
+                            (string-constant hide-indent-guides/menu)
+                            (string-constant show-indent-guides/menu))))]
+               [callback (λ (self event)
+                           (define value (preferences:get 'drracket:show-indent-guides?))
+                           (preferences:set 'drracket:show-indent-guides? (not value))
+                           (send (get-definitions-text) show-indent-guides! (not value)))]))
+        (set-show-menu-sort-key indent-guides-menu-item 303)
         
         (define show-column-guide-menu-item
           (new menu:can-restore-menu-item%
@@ -3617,7 +3739,7 @@
                            (define ov (preferences:get 'framework:column-guide-width))
                            (preferences:set 'framework:column-guide-width
                                             (list (not (car ov)) (cadr ov))))]))
-        (set-show-menu-sort-key show-column-guide-menu-item 303)
+        (set-show-menu-sort-key show-column-guide-menu-item 304)
         
         (let ()
           (define (font-adjust adj label key shortcut)
@@ -3709,13 +3831,14 @@
       (field [module-browser-shown? #f]
              [module-browser-parent-panel #f]
              [module-browser-panel #f]
+             [module-browser-options-pane #f]
              [module-browser-ec #f]
              [module-browser-button #f]
-             [module-browser-lib-path-check-box #f]
-             [module-browser-planet-path-check-box #f]
              [module-browser-name-length-choice #f]
              [module-browser-pb #f]
              [module-browser-menu-item 'module-browser-menu-item-unset])
+      (define module-browser-pkg-set-choice #f)
+      (define module-browser-submod-set-choice #f)
       
       (inherit open-status-line close-status-line update-status-line)
       
@@ -3764,26 +3887,6 @@
                                     module-browser-panel
                                     module-browser-pb))
           
-          (let* ([show-callback
-                  (λ (cb key)
-                    (if (send cb get-value)
-                        (send module-browser-pb show-visible-paths key)
-                        (send module-browser-pb remove-visible-paths key))
-                    (preferences:set 'drracket:module-browser:hide-paths 
-                                     (send module-browser-pb get-hidden-paths)))]
-                 [mk-checkbox
-                  (λ (key label)
-                    (new check-box%
-                         (parent module-browser-panel)
-                         (label label)
-                         (value (not (memq key (preferences:get 
-                                                'drracket:module-browser:hide-paths))))
-                         (callback 
-                          (λ (cb _) 
-                            (show-callback cb key)))))])
-            (set! module-browser-lib-path-check-box (mk-checkbox 'lib show-lib-paths))
-            (set! module-browser-planet-path-check-box (mk-checkbox 'planet show-planet-paths)))
-          
           (set! module-browser-name-length-choice
                 (new choice%
                      (parent module-browser-panel)
@@ -3800,11 +3903,25 @@
                           (update-module-browser-name-length selection))))))
           (update-module-browser-name-length 
            (preferences:get 'drracket:module-browser:name-length))
+
+          (set! module-browser-options-pane
+                (new horizontal-pane% [parent module-browser-panel]
+                     [stretchable-height #f]))
+          (set! module-browser-pkg-set-choice
+                (new module-browser-pkg-set-choice%
+                     [parent module-browser-options-pane]
+                     [pasteboard #f]))
+          (set! module-browser-submod-set-choice
+                (new module-browser-submod-set-choice%
+                     [parent module-browser-options-pane]
+                     [pasteboard #f]))
+          (send module-browser-pkg-set-choice stretchable-width #t)
+          (send module-browser-submod-set-choice stretchable-width #t)
           
-          (set! module-browser-button 
+          (set! module-browser-button
                 (new button%
                      (parent module-browser-panel)
-                     (label refresh)
+                     (label module-browser-refresh)
                      (callback (λ (x y) (update-module-browser-pane)))
                      (stretchable-width #t))))
         
@@ -3845,8 +3962,6 @@
             (open-status-line 'plt:module-browser)
             (update-status-line 'plt:module-browser status-compiling-definitions)
             (send module-browser-button enable #f)
-            (send module-browser-lib-path-check-box enable #f)
-            (send module-browser-planet-path-check-box enable #f)
             (send module-browser-name-length-choice enable #f)
             (disable-evaluation-in-tab current-tab)
             (drracket:module-overview:fill-pasteboard 
@@ -3855,16 +3970,21 @@
               definitions-text
               0
               (send definitions-text last-position))
-             (λ (str) (update-status-line 
-                       'plt:module-browser 
-                       (gui-utils:trim-string (format module-browser-progress-constant str) 200)))
+             (let ([n 0])
+               (λ (str)
+                 (when (zero? (modulo n 20))
+                   (update-status-line
+                    'plt:module-browser
+                    (gui-utils:trim-string (format module-browser-progress-constant str)
+                                           200)))
+                 (set! n (+ n 1))))
              (λ (user-thread user-custodian)
                (send mod-tab set-breakables user-thread user-custodian)))
+            (send module-browser-pkg-set-choice set-pasteboard module-browser-pb)
+            (send module-browser-submod-set-choice set-pasteboard module-browser-pb)
             (send mod-tab set-breakables old-break-thread old-custodian)
             (send mod-tab enable-evaluation)
             (send module-browser-button enable #t)
-            (send module-browser-lib-path-check-box enable #t)
-            (send module-browser-planet-path-check-box enable #t)
             (send module-browser-name-length-choice enable #t)
             (close-status-line 'plt:module-browser))))
       
@@ -3932,6 +4052,15 @@
                           (let-values ([(base name dir?) (split-path editing-path)])
                             base))))
                   (when pth (handler:edit-file pth)))])
+          (new menu:can-restore-menu-item%
+            (label (string-constant reopen-closed-tab))
+            (shortcut #\t)
+            (shortcut-prefix (cons 'shift (get-default-shortcut-prefix)))
+            (parent file-menu)
+            [demand-callback (λ (item) (send item enable (pair? (preferences:get 'drracket:recently-closed-tabs))))]
+            (callback
+             (λ (x y)
+               (reopen-closed-tab))))
           (super file-menu:between-open-and-revert file-menu)
           (make-object separator-menu-item% file-menu))]
       (define close-tab-menu-item #f)
@@ -4055,7 +4184,7 @@
         (mk-menu-item (λ (ed) (send ed get-spell-check-text)) 
                       (λ (ed new-val) (send ed set-spell-check-text new-val))
                       'framework:spell-check-text?
-                      #\t
+                      #f
                       (string-constant spell-check-scribble-text))
         
         (new menu:can-restore-menu-item%
@@ -4288,7 +4417,8 @@
         (define language-settings (send (get-definitions-text) get-next-settings))
         (define new-language
           (drracket:language-configuration:language-settings-language language-settings))
-        (send new-language capability-value key))
+        (drracket:module-language-tools:call-capability-value
+         new-language (get-definitions-text) key))
       
       (define language-menu 'uninited-language-menu)
       (define language-specific-menu 'language-specific-menu-not-yet-init)
@@ -4372,8 +4502,11 @@
                                 (filter
                                  values
                                  (map (λ (l) 
-                                        (and 
-                                         (send l capability-value 'drscheme:teachpack-menu-items)
+                                        (and
+                                         (drracket:module-language-tools:call-capability-value
+                                          l
+                                          (get-definitions-text)
+                                          'drscheme:teachpack-menu-items)
                                          (format "\n  ~a" (send l get-language-name))))
                                       (drracket:language-configuration:get-languages))))))
                              this
@@ -4389,7 +4522,7 @@
                                                   'drscheme:language-menu-title)]
                                           [parent mb]))
         (define ((send-method method) _1 _2)
-          (define text (get-focus-object))
+          (define text (get-edit-target-object))
           (when (is-a? text racket:text<%>)
             (method text)))
         (define (show/hide-capability-menus)
@@ -4522,7 +4655,8 @@
                  (define settings (send defs get-next-settings))
                  (define language 
                    (drracket:language-configuration:language-settings-language settings))
-                 (send language capability-value 'drscheme:tabify-menu-callback))])
+                 (drracket:module-language-tools:call-capability-value
+                  language defs 'drscheme:tabify-menu-callback))])
           (new menu:can-restore-menu-item%
                [label (string-constant reindent-menu-item-label)]
                [parent language-specific-menu]
@@ -4546,34 +4680,8 @@
                        (f x 0 (send x last-position))))))]
                [shortcut #\i]
                [demand-callback (λ (m) (send m enable (cap-val)))]))
-        
-        (make-object menu:can-restore-menu-item%
-          (string-constant box-comment-out-menu-item-label)
-          language-specific-menu
-          (send-method (λ (x) (send x box-comment-out-selection))))
-        (make-object menu:can-restore-menu-item%
-          (string-constant semicolon-comment-out-menu-item-label)
-          language-specific-menu
-          (send-method (λ (x) (send x comment-out-selection))))
-        (make-object menu:can-restore-menu-item%
-          (string-constant uncomment-menu-item-label)
-          language-specific-menu
-          (λ (x y)
-            (let ([text (get-focus-object)])
-              (when (is-a? text text%)
-                (let ([admin (send text get-admin)])
-                  (cond
-                    [(is-a? admin editor-snip-editor-admin<%>)
-                     (let ([es (send admin get-snip)])
-                       (cond
-                         [(is-a? es comment-box:snip%)
-                          (let ([es-admin (send es get-admin)])
-                            (when es-admin
-                              (let ([ed (send es-admin get-editor)])
-                                (when (is-a? ed racket:text<%>)
-                                  (send ed uncomment-box/selection)))))]
-                         [else (send text uncomment-selection)]))]
-                    [else (send text uncomment-selection)]))))))
+
+        (update-comment-out-menu-items)
         
         (set! insert-menu
               (new (get-menu%)
@@ -4653,6 +4761,154 @@
           (register-capability-menu-item 'drscheme:special:insert-lambda insert-menu))
         
         (frame:reorder-menus this))
+
+      (define/public (update-comment-out-menu-items)
+        ;; 1. clear out comment-related and following menu items,
+        ;; saving the ones that follow
+        (define items-to-restore '())
+        (let loop ([items (send language-specific-menu get-items)]
+                   [state 'found-nothing])
+          (cond
+            [(empty? items) (void)]
+            [else
+             (define item (car items))
+             (match state
+               ['found-nothing
+                (cond
+                  [(and (is-a? item labelled-menu-item<%>)
+                        (equal? (string-constant box-comment-out-menu-item-label)
+                                (send item get-label)))
+                   (send item delete)
+                   (loop (cdr items) 'found-comment-out-items)]
+                  [else
+                   (loop (cdr items) 'found-nothing)])]
+               ['found-comment-out-items
+                (send item delete)
+                (loop (cdr items) (if (is-a? item separator-menu-item%)
+                                      'found-end-of-comment-out-items
+                                      'found-comment-out-items))]
+               ['found-end-of-comment-out-items
+                (send item delete)
+                (set! items-to-restore (cons item items-to-restore))
+                (loop (cdr items) 'found-end-of-comment-out-items)])]))
+
+        ;; 2. add box comment out
+        (make-object menu:can-restore-menu-item%
+          (string-constant box-comment-out-menu-item-label)
+          language-specific-menu
+          (λ (_1 _2)
+            (define text (get-edit-target-object))
+            (when (is-a? text racket:text<%>)
+              (send text box-comment-out-selection))))
+
+        ;; 3. add comment-out directive menus from the language
+        (define line-comment-directives-found '())
+        (define (make-a-comment-out-menu-item comment-directive)
+          (define-values (menu-item-label callback comment-directive-key)
+            (match comment-directive
+              [(list 'line start padding)
+               (define lab (string-append start padding))
+               (values (format (string-constant comment-out-with-line-start)
+                               lab)
+                       (λ (text)
+                         (send text comment-out-selection
+                               #:start start
+                               #:padding padding))
+                       lab)]
+              [(list 'region start continue end padding)
+               (values (format (string-constant comment-out-with-region)
+                               start end)
+                       (λ (text)
+                         (send text region-comment-out-selection
+                               #:start start
+                               #:continue continue
+                               #:end end
+                               #:padding padding))
+                       (cons start end))]))
+          (unless (member comment-directive-key (map car line-comment-directives-found))
+            (set! line-comment-directives-found
+                  (cons (cons comment-directive-key comment-directive)
+                        line-comment-directives-found))
+            (new menu:can-restore-menu-item%
+              [label menu-item-label]
+              [parent language-specific-menu]
+              [callback
+              (λ (_1 _2)
+                (define text (get-edit-target-object))
+                (when (is-a? text racket:text<%>)
+                  (callback text)))])))
+        (define all-comment-directives
+          (let* ([lang/config (send (get-definitions-text) get-next-settings)]
+                 [lang (drracket:language-configuration:language-settings-language lang/config)])
+            (if (is-a? lang drracket:module-language:module-language<%>)
+                (call-read-language (send (get-definitions-text) get-irl)
+                                    'drracket:comment-delimiters
+                                    '((line ";;" " ")
+                                      (region "#|" "  " "|#" " ")))
+                ;; if we're not in the module language do what the old code used to do
+                (list (list 'line ";" "")))))
+        (for ([comment-directives (in-list all-comment-directives)]
+              #:when (< (length line-comment-directives-found) 5))
+          (make-a-comment-out-menu-item comment-directives))
+        (when (null? line-comment-directives-found)
+          ;; would be better if this used the defaults
+          (make-a-comment-out-menu-item (list 'line ";" "")))
+        (set! line-comment-directives-found (reverse line-comment-directives-found))
+
+        ;; 4. add uncomment menu item
+        (define (do-uncomment-selection text)
+          (when (is-a? text racket:text<%>)
+            (let/ec escape
+              (when (send text uncomment-selection/box)
+                (escape (void)))
+              (for ([comment-directive (in-list (map cdr line-comment-directives-found))])
+                (match comment-directive
+                  [(list 'line start padding)
+                   (when (send text commented-out/line?
+                               #:start start
+                               #:padding padding)
+                     (send text uncomment-selection/line
+                           #:start start
+                           #:padding padding)
+                     (escape (void)))]
+                [(list 'region start continue end padding)
+                 (when (send text commented-out/region?
+                             #:start start
+                             #:end end
+                             #:continue continue)
+                   (send text uncomment-selection/region
+                         #:start start
+                         #:end end
+                         #:continue continue
+                         #:padding padding)
+                   (escape (void)))])))))
+        (make-object menu:can-restore-menu-item%
+          (string-constant uncomment-menu-item-label)
+          language-specific-menu
+          (λ (x y)
+            (let ([text (get-focus-object)])
+              (when (is-a? text text%)
+                (let ([admin (send text get-admin)])
+                  (cond
+                    [(is-a? admin editor-snip-editor-admin<%>)
+                     (let ([es (send admin get-snip)])
+                       (cond
+                         [(is-a? es comment-box:snip%)
+                          (let ([es-admin (send es get-admin)])
+                            (when es-admin
+                              (let ([ed (send es-admin get-editor)])
+                                (when (is-a? ed racket:text<%>)
+                                  (send ed uncomment-box/selection)))))]
+                         [else (do-uncomment-selection text)]))]
+                    [else (do-uncomment-selection text)]))))))
+
+        ;; 5. restore removed menu items
+        (when (pair? items-to-restore)
+          ;; only add a separator if there were some items following
+          ;; the comment out items before (oth. we get two separators)
+          (new separator-menu-item% [parent language-specific-menu])
+          (for ([item (in-list (reverse items-to-restore))])
+            (send item restore))))
       
       (define/public (jump-to-previous-error-loc)
         (define-values (before after sorted) (find-before-and-after))
@@ -4795,11 +5051,13 @@
                               (close-ith-tab i))
                             (define/augment (on-reorder former-indicies)
                               (reorder-tabs former-indicies))
+                            (define/override (on-new-request)
+                              (create-new-tab))
                             (super-new
                              (font small-control-font)
                              (parent panel-with-tabs)
                              (stretchable-height #f)
-                             (style '(deleted no-border can-reorder can-close))
+                             (style '(deleted no-border can-reorder can-close new-button))
                              (choices '("first name"))
                              (callback (λ (x y)
                                          (define sel (send tabs-panel get-selection))
@@ -4883,10 +5141,11 @@
                   (λ (c dc)
                     (when (number? th)
                       (unless color-valid?
-                        (let-values ([(cw ch) (send c get-client-size)])
-                          (send dc set-font small-control-font)
-                          (send dc draw-text on-string 0 (- (/ ch 2) (/ th 2)))))))]))
-          (define-values (tw th ta td) 
+                        (define-values (cw ch) (send c get-client-size))
+                        (send dc set-text-foreground (get-label-foreground-color))
+                        (send dc set-font small-control-font)
+                        (send dc draw-text on-string 0 (- (/ ch 2) (/ th 2))))))]))
+          (define-values (tw th ta td)
             (send (send color-status-canvas get-dc) get-text-extent
                   on-string small-control-font))
           (send color-status-canvas min-width (inexact->exact (ceiling tw)))
@@ -5636,7 +5895,7 @@
           (create-new-drscheme-frame name #:show? show?)])]
       [else
        (create-new-drscheme-frame name #:show? show?)]))
-  
+
   (define (create-new-drscheme-frame filename #:show? [show? #t])
     (let* ([drs-frame% (drracket:get/extend:get-unit-frame)]
            [frame (new drs-frame% (filename filename))])
@@ -5644,6 +5903,7 @@
       (send frame initialize-module-language)
       (when show? (send frame show #t))
       (send (send frame get-interactions-text) initialize-console)
+      (send frame after-create-new-drracket-frame show?)
       frame)))
 
 (define/contract (compute-label-string fn)

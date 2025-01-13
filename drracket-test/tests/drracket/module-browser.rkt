@@ -1,8 +1,7 @@
 #lang racket/base
-(require racket/unit
+(require drracket/private/standalone-module-browser
          racket/async-channel
-         drracket/private/module-browser
-         drracket/private/standalone-module-browser
+         racket/unit
          rackunit)
 
 (define (fetch-files stx/fn)
@@ -39,3 +38,11 @@
                          (map car r/b+submod)))
 (check-not-false (member (collection-file-path "list.rkt" "racket")
                          (map car r/b+submod)))
+(check-not-false (member `(submod ,(collection-file-path "module-browser-test2.rkt" "tests" "drracket") sub)
+                         (map car r/b+submod)))
+
+(define test3
+  (fetch-files
+   (collection-file-path "module-browser-test3.rkt" "tests" "drracket")))
+(check-not-false (member `(submod ,(collection-file-path "module-browser-test3.rkt" "tests" "drracket") test)
+                         (map car test3)))

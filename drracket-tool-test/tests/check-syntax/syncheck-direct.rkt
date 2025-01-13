@@ -1,15 +1,15 @@
 #lang racket/base
 
 (require drracket/check-syntax
-         (only-in drracket/private/syncheck/traversals
-                  [build-trace% basic-build-trace%])
          racket/class
+         racket/file
+         racket/format
          racket/match
+         racket/runtime-path
          racket/set
          rackunit
          syntax/modread
-         racket/file
-         racket/format)
+         (only-in drracket/private/syncheck/traversals [build-trace% basic-build-trace%]))
 
 (define-syntax-rule
   (define-get-arrows get-what-arrows method-header arrow-info)
@@ -23,6 +23,8 @@
           (super-new)))
       str)))
 
+(define-runtime-path here ".")
+
 (define (define-get-arrows/proc mixin str)
   (define results '())
 
@@ -33,18 +35,19 @@
                     (when x
                       (set! results (cons x results))))
                   (define/override (syncheck:find-source-object stx)
-                    (if (eq? 'the-source (syntax-source stx))
-                        'yep
-                        #f))))))
+                    (and (eq? 'the-source (syntax-source stx)) 'yep))))))
 
   (define-values (add-syntax done)
     (make-traversal (make-base-namespace) #f))
 
   (parameterize ([current-annotations annotations]
-                 [current-namespace (make-base-namespace)])
+                 [current-namespace (make-base-namespace)]
+                 [current-load-relative-directory here])
     (add-syntax (expand
                  (parameterize ([read-accept-reader #t])
-                   (read-syntax 'the-source (open-input-string str)))))
+                   (define p (open-input-string str))
+                   (port-count-lines! p)
+                   (read-syntax 'the-source p))))
     (done))
   (apply set results))
 
@@ -73,7 +76,7 @@
 (check-equal? (get-tail-arrows "#lang racket/base\n(if 1 2 3)")
               (set '(18 24) '(18 26)))
 (check-equal? (get-tail-arrows "#lang racket/base\n(λ (x) 1 2)")
-              (set '(18 28)))
+              (set '(18 27)))
 (check-equal? (get-tail-arrows "#lang racket/base\n(case-lambda [(x) 1 2][(y z) 3 4 5 6])")
               (set '(18 38) '(18 53)))
 (check-equal? (get-tail-arrows "#lang racket/base\n(let ([x 3]) (#%expression (begin 1 2)))")
@@ -88,6 +91,8 @@
               (set '(18 46)))
 (check-equal? (get-tail-arrows "#lang racket\n(define (f x) (match 'x ['x (f x)]))")
               (set '(13 27) '(27 41)))
+(check-equal? (get-tail-arrows "#lang racket/base\n(if '🏴‍☠️ 2 3)")
+              (set '(18 28) '(18 30)))
 
 
 
@@ -111,13 +116,13 @@
 
 
 (define-get-arrows get-binding-arrows
-  (syncheck:add-arrow start-source-obj	 
-                      start-left	 
-                      start-right	 
-                      end-source-obj	 
-                      end-left	 
-                      end-right	 
-                      actual?	 
+  (syncheck:add-arrow start-source-obj
+                      start-left
+                      start-right
+                      end-source-obj
+                      end-left
+                      end-right
+                      actual?
                       phase-level)
   (and actual? ;; skip the purple `?` arrows
        (list (list start-left start-right) (list end-left end-right))))
@@ -135,17 +140,17 @@
        (list (list start-left start-right) (list end-left end-right))))
 
 (define-get-arrows get-binding-arrows/pxpy
-  (syncheck:add-arrow/name-dup/pxpy start-source-obj    
-                                    start-left  
+  (syncheck:add-arrow/name-dup/pxpy start-source-obj
+                                    start-left
                                     start-right
                                     start-px
                                     start-py
-                                    end-source-obj      
-                                    end-left    
+                                    end-source-obj
+                                    end-left
                                     end-right
                                     end-px
                                     end-py
-                                    actual?     
+                                    actual?
                                     phase-level
                                     require-arrows?
                                     name-dup?)
@@ -169,6 +174,19 @@
                '((10 21) (52 52))
                '((32 33) (39 40))
                '((50 51) (56 57))))
+(check-equal? (get-binding-arrows
+               (string-append
+                "(module m racket/base\n"
+                "  (define 🏴‍☠️ 4)\n"
+                "  🏴‍☠️\n"
+                "  (let ([🏴‍☠️ 1]) 🏴‍☠️))\n"))
+              (set
+               '((10 21) (25 31))
+               '((10 21) (37 37))
+               '((10 21) (50 53))
+               '((10 21) (61 61))
+               '((32 36) (42 46))
+               '((56 60) (65 69))))
 
 (check-equal? (get-binding-arrows/pxpy
                "#lang racket/base\n(require (only-in racket/base))")
@@ -239,6 +257,8 @@
                    '((10 21 0.5 0.5) (89 98 0.5 0.5))
                    '((10 21 0.5 0.5) (23 30 0.5 0.5))
                    '((64 68 0.5 0.5) (125 130 0.5 0.5))
+                   '((118 121 0.5 0.5) (131 134 0.5 0.5))
+                   ;'((118 121 0.5 0.5) (125 130 0.5 0.5))
                    '((99 110 0.5 0.5) (131 134 0.5 0.5))))
 
 (check-equal? (get-binding-arrows
@@ -260,6 +280,8 @@
                 "      (define color-scheme-colors 3)\n"
                 "      (set! color-scheme-colors color-scheme-colors))\n"))
               (set '((6 12) (14 18))
+                   '((6 12) (20 26))
+                   '((6 12) (29 35))
                    '((6 12) (44 50))
                    '((6 12) (71 71))
                    '((6 12) (81 85))
@@ -318,6 +340,182 @@
               (set '((22 23) (44 45))
                    '((24 25) (46 47))))
 
+(check-equal? (get-purple-binding-arrows
+               (string-append
+                "#lang racket/base\n"
+                "(#%require (portal x (+ 2 λ)))\n"
+                "#'x\n"))
+              (set '((6 17) (40 41))
+                   '((6 17) (44 45))
+                   '((37 38) (51 52))))
+
+(check-equal? (get-purple-binding-arrows
+               (string-append
+                "#lang racket/base\n"
+                "(require (for-syntax racket/base))\n"
+                "(#%require (for-meta 1 (portal x (+ 2 λ))))\n"
+                "(define-syntax m #'x)\n"))
+              (set '((6 17) (91 92))
+                   '((6 17) (87 88))
+                   '((39 50) (87 88))
+                   '((39 50) (91 92))
+                   '((84 85) (116 117))))
+
+
+(check-equal? (get-binding-arrows
+               (string-append
+                "#lang racket/base\n"
+                "(require \"soup.rkt\")\n"
+                "(soup-ref kettle)\n"
+                "kettle\n"))
+              (set
+               '((6 17) (19 26))
+               '((27 37) (40 48))
+               '((27 37) (49 55))
+               '((27 37) (57 63))))
+
+(check-equal? (get-binding-arrows
+               (string-append
+                "#lang racket/base\n"
+                "(define x 1)\n"
+                "(module+ m x)\n"))
+              (set '((6 17) (19 25))
+                   '((6 17) (28 28))
+                   '((6 17) (32 39))
+                   '((26 27) (42 43))))
+
+(check-equal? (get-binding-arrows
+               (string-append
+                "#lang racket/base\n"
+                "(define x 1)\n"
+                "x\n"
+                "(module+ m\n"
+                "  x\n"
+                "  (define x 1))\n"))
+              (set
+               '((6 17) (19 25))
+               '((6 17) (28 28))
+               '((6 17) (34 41))
+               '((6 17) (60 60))
+               '((6 17) (51 57))
+               '((26 27) (31 32))
+               '((58 59) (46 47))))
+
+(check-equal? (get-binding-arrows
+               (string-append
+                "#lang racket/base\n"
+                "(require racket/list)\n"
+                "first\n"
+                "(module n racket\n"
+                "  first\n"
+                "  (module+ m\n"
+                "    (require (rename-in racket/list [first ABC]))))\n"
+                "(module o racket\n"
+                "  first)\n"))
+              (set
+               '((6 17) (47 53))
+               '((6 17) (19 26))
+               '((6 17) (137 143))
+               '((27 38) (40 45))
+               '((56 62) (65 70))
+               '((56 62) (74 81))
+               '((56 62) (89 96))
+               '((56 62) (98 107))
+               '((146 152) (155 160))))
+
+
+(check-equal?
+ (get-binding-arrows (string-append
+                      "#lang racket/base\n"
+                      "(require racket/list)\n"
+                      "first\n"
+                      "(module+ m\n"
+                      "  (require racket/list)\n"
+                      "  first)\n"))
+ (set
+  '((6 17) (19 26))
+  '((6 17) (47 54))
+  '((6 17) (60 67))
+  '((27 38) (83 88))
+  '((27 38) (40 45))
+  '((68 79) (83 88))))
+
+(check-equal?
+ (get-binding-arrows (string-append
+                      "#lang racket/base\n"
+                      "(module n racket/base\n"
+                      "  (unless #f 42))\n"))
+ (set
+  '((6 17) (19 25))
+  '((28 39) (53 53))
+  '((28 39) (43 49))
+  '((28 39) (50 50))))
+
+
+(check-equal?
+ (get-binding-arrows
+  (string-append
+   "#lang racket/base\n"
+   "(module m racket/base\n"
+   "  (define lam 1)\n"
+   "  (provide lam)\n"
+   "  lam)\n"))
+ (set '((6 17) (19 25))
+      '((28 39) (43 49))
+      '((28 39) (54 54))
+      '((28 39) (60 67))
+      '((50 53) (75 78))
+      '((50 53) (68 71))))
+
+(check-equal?
+ (get-binding-arrows
+  (string-append
+   "#lang racket/base\n"
+   "(module m racket/base\n"
+   "  (define lam 1)\n"
+   "  (module+ n (provide lam)))\n"))
+ (set '((6 17) (19 25))
+      '((28 39) (43 49))
+      '((28 39) (54 54))
+      '((28 39) (60 67))
+      '((28 39) (71 78))
+      '((50 53) (79 82))))
+
+(check-equal?
+ (get-binding-arrows
+  (string-append
+   "#lang racket/base\n"
+   "(require racket/list)\n"
+   "(let ([first #f])\n"
+   "  (local-require racket/list)\n"
+   "  first)\n"))
+ (set
+  '((6 17) (53 53))
+  '((6 17) (19 26))
+  '((6 17) (41 44))
+  '((6 17) (61 74))
+  '((75 86) (90 95))
+
+  ;; this one is wrong but there doesn't seem to be
+  ;; enough information in the fully-expanded form
+  ;; to drop it.
+  '((27 38) (90 95))))
+
+(check-equal?
+ (get-binding-arrows
+  (string-append
+   "#lang racket/base\n"
+   "(require racket/list)\n"
+   "first\n"
+   "(require (rename-in racket/list [first 1st]))\n"
+   "1st\n"))
+ (set
+  '((6 17) (19 26))
+  '((6 17) (47 54))
+  '((6 17) (56 65))
+  '((27 38) (40 45))
+  '((66 77) (92 95)) ;; sketchy; should we eliminate?
+  '((85 88) (92 95))))
 
 ;                                                       
 ;                                                       
@@ -418,7 +616,7 @@
    "\n"
    "(require (only-in racket/list first [second deuxième]))\n"
    "first deuxième\n"))
- (set '(37 76) '(37 82)))
+ (set '(37 75) '(37 81)))
 
 (check-equal?
  (get-require-arrows
@@ -445,7 +643,7 @@
    "\n"
    "(require (rename-in racket/list [second deuxième]))\n"
    "deuxième\n"))
-  (set '(39 72)))
+  (set '(39 71)))
 
 (check-equal?
  (get-require-arrows
@@ -494,6 +692,111 @@
  (set '(37 62)
       '(37 64)))
 
+(check-equal?
+ (get-require-arrows
+  (string-append
+   "#lang racket/base\n"
+   "(require racket/list)\n"
+   "first\n"
+   "(module+ m\n"
+   "  (require racket/list)\n"
+   "  first)\n"))
+ (set '(27 83) '(68 83) '(27 40)))
+
+(check-equal?
+ (get-require-arrows
+  (string-append
+   "#lang racket/base\n"
+   "(require (prefix-in x: racket/list) racket/list)\n"
+   "x:first\n"
+   "first\n"))
+ (set '(54 75) '(38 67) '(41 69)))
+
+(check-equal?
+ (get-require-arrows
+  (string-append
+   "#lang racket/base\n"
+   "(require racket/list)\n"
+   "(let ([first #f])\n"
+   "  (local-require racket/list)\n"
+   "  first)\n"))
+ (set '(75 90)
+
+      ;; this one is wrong but there doesn't seem to be
+      ;; enough information in the fully-expanded form
+      ;; to drop it.
+      '(27 90)))
+
+(check-equal?
+ (get-require-arrows
+  (string-append
+   "#lang racket/base\n"
+   "(require racket/list)\n"
+   "first\n"
+   "(require (rename-in racket/list [first 1st]))\n"
+   "1st\n"))
+ (set '(27 40)
+
+      ;; this arrow is sketchy. Can we get rid of it?
+      '(66 92)))
+
+(check-equal?
+ (get-require-arrows
+  #<<--
+#lang racket
+(module m racket
+  (provide (for-space outer x))
+  (define-syntax (def stx)
+    (syntax-case stx ()
+      [(_ x e)
+       #`(define #,((make-interned-syntax-introducer 'outer) #'x 'add) e)]))
+  (def x 1))
+
+(define-syntax (use stx)
+  (syntax-case stx ()
+    [(_ x)
+     ((make-interned-syntax-introducer 'outer) #'x 'add)]))
+
+(require (for-space outer 'm))
+(use x)
+--
+  )
+ (set '(364 374)))
+
+(check-equal?
+ (get-require-arrows
+  #<<--
+#lang racket
+(module m racket
+  (provide abcdef)
+  (define abcdef 1))
+
+(define-syntax (use stx)
+  (syntax-case stx ()
+    [(_ x)
+     ((make-interned-syntax-introducer 'outer) #'x 'add)]))
+
+(require (for-space outer 'm)
+         'm)
+(use abcdef)
+--
+  )
+ (set '(216 238)))
+
+(check-equal?
+ (get-require-arrows
+  #<<--
+#lang racket
+(module m racket
+  (provide abcdef)
+  (define abcdef 1))
+
+(require (for-space outer 'm)
+         'm)
+abcdef
+--
+  )
+ (set '(110 114)))
 
 ;                                                 
 ;                                                 
@@ -517,6 +820,10 @@
   (syncheck:add-text-type _ start end type)
   (and (equal? type 'unused-identifier)
        (list start end)))
+
+(define-get-arrows unused-binder
+  (syncheck:unused-binder _ start end)
+  (list start end))
 
 (check-equal?
  (get-text-type
@@ -545,35 +852,51 @@
               (set '(69 74)           ;racket/match from multi-in
                    '(77 87)))         ;racket/set
 
+(check-equal?
+ (unused-binder
+  (string-append
+   "#lang racket/base\n"
+   "(define unused 1)\n"))
+ (set '(26 32)))
+
+(check-equal?
+ (unused-binder
+  (string-append
+   "#lang racket/base\n"
+   "(define-syntax-rule (m f)\n"
+   "  (void\n"
+   "   (let ([f 1]) f)\n"
+   "   (let ([f 2]) f)))\n"
+   "\n"
+   "(m ffff)"))
+ (set '(96 100)))
 
 
-;                                                                                              
-;                                                                                              
-;                                                                                              
-;                                                                                              
-;                                                                                              
-;                                                                                              
-;        ;;;             ;;;;                  ;                                           ;   
-;        ;;;            ;;;;;                ;;;                                         ;;;   
-;        ;;;            ;;;                  ;;;                                         ;;;   
-;     ;; ;;;    ;;;;   ;;;;;  ;;; ;;;       ;;;;;;   ;;;;;;   ;;; ;;   ;; ;;;    ;;;;   ;;;;;; 
-;    ;;;;;;;   ;;;;;;  ;;;;;  ;;;;;;;;      ;;;;;;  ;;;;;;;;  ;;;;;   ;;;;;;;   ;;;;;;  ;;;;;; 
-;   ;;;  ;;;  ;;;  ;;;  ;;;   ;;;  ;;;       ;;;    ;;;  ;;;  ;;;    ;;;  ;;;  ;;;  ;;;  ;;;   
-;   ;;;  ;;;  ;;;;;;;;  ;;;   ;;;  ;;;       ;;;       ;;;;;  ;;;    ;;;  ;;;  ;;;;;;;;  ;;;   
-;   ;;;  ;;;  ;;;;;;;;  ;;;   ;;;  ;;;       ;;;     ;;;;;;;  ;;;    ;;;  ;;;  ;;;;;;;;  ;;;   
-;   ;;;  ;;;  ;;;       ;;;   ;;;  ;;;       ;;;    ;;;  ;;;  ;;;    ;;;  ;;;  ;;;       ;;;   
-;    ;;;;;;;   ;;;;;;;  ;;;   ;;;  ;;;       ;;;;;  ;;;;;;;;  ;;;     ;;;;;;;   ;;;;;;;  ;;;;; 
-;     ;; ;;;    ;;;;;   ;;;   ;;;  ;;;        ;;;;   ;;; ;;;  ;;;      ;; ;;;    ;;;;;    ;;;; 
-;                                                                         ;;;                  
-;                                                                    ;;;;;;;;                  
-;                                                                     ;;;;;                    
-;                                                                                              
-;                                                                                              
+;                                                                                                             
+;                                                                                                             
+;                                                                                                             
+;                                                                                                             
+;      ;;;          ;;;;            ;;;                               ;  ;                                 ;  
+;      ;;;         ;;;                                                ;;;;                               ;;;  
+;   ;; ;;;   ;;;;  ;;;; ;;; ;;      ;;; ;;; ;;; ;;; ;; ;;;  ;;; ;;   ; ;;;;  ;;;;;  ;;; ;;;; ;;;   ;;;;  ;;;; 
+;  ;;;;;;;  ;; ;;; ;;;; ;;;;;;;     ;;; ;;; ;;; ;;;;;;;;;;; ;;;;;;;  ; ;;;; ;;;;;;; ;;;;;;;;;;;;  ;; ;;; ;;;; 
+;  ;;; ;;; ;;; ;;; ;;;  ;;; ;;;     ;;; ;;; ;;; ;;; ;;; ;;; ;;; ;;;  ; ;;;  ;;  ;;; ;;;  ;;; ;;; ;;; ;;; ;;;  
+;  ;;; ;;; ;;;;;;; ;;;  ;;; ;;;     ;;; ;;; ;;; ;;; ;;; ;;; ;;; ;;;  ; ;;;    ;;;;; ;;;  ;;; ;;; ;;;;;;; ;;;  
+;  ;;; ;;; ;;;     ;;;  ;;; ;;;     ;;; ;;; ;;; ;;; ;;; ;;; ;;; ;;;  ; ;;;  ;;; ;;; ;;;  ;;; ;;; ;;;     ;;;  
+;  ;;;;;;;  ;;;;;; ;;;  ;;; ;;;     ;;; ;;;;;;; ;;; ;;; ;;; ;;;;;;; ;  ;;;; ;;; ;;; ;;;  ;;;;;;;  ;;;;;; ;;;; 
+;   ;; ;;;   ;;;;  ;;;  ;;; ;;;     ;;;  ;; ;;; ;;; ;;; ;;; ;;; ;;  ;   ;;;  ;;;;;; ;;;   ;; ;;;   ;;;;   ;;; 
+;                                  ;;;;                     ;;;                              ;;;              
+;                                  ;;;                      ;;;                          ;;;;;;               
+;                                                                                                             
+;                                                                                                             
 
 
 (define-get-arrows add-definition-target
   (syncheck:add-definition-target source start-pos end-pos id mods)
   (list id mods))
+(define-get-arrows add-definition-target/phase-level+space
+  (syncheck:add-definition-target/phase-level+space source start-pos end-pos id mods phase-level)
+  (list id mods phase-level))
 
 ;; ensure that we get two different
 ;; identifiers for the two different `x`s
@@ -587,6 +910,148 @@
                  "(m)\n")))
               3)
 
+(define example-module-defining-x-in-multiple-phases
+#<<--
+#lang racket/base
+(require (for-syntax racket/base))
+
+(module m racket/base
+  (require (for-syntax racket/base))
+
+  (define x 0)
+  (provide x)
+
+  (begin-for-syntax
+    (define x 1)
+    (provide x)))
+--
+  )
+
+(check-equal? (add-definition-target example-module-defining-x-in-multiple-phases)
+              (set (list 'x '(m))))
+
+(check-equal? (add-definition-target/phase-level+space example-module-defining-x-in-multiple-phases)
+              (set (list 'x '(m) 1)
+                   (list 'x '(m) 0)))
+
+(define-get-arrows add-jump-to-definition
+  (syncheck:add-jump-to-definition source start-pos end-pos id filename mods)
+  (list id mods))
+(define-get-arrows add-jump-to-definition/phase-level+space
+  (syncheck:add-jump-to-definition/phase-level+space source start-pos end-pos id filename mods phase-level)
+  (list id mods phase-level))
+
+(define example-module-with-multiple-phases
+#<<--
+#lang racket/base
+(require (for-syntax racket/base racket/list) racket/list)
+(begin-for-syntax (void drop))
+(take)
+--
+  )
+
+(check-equal? (for/set ([x (in-set (add-jump-to-definition example-module-with-multiple-phases))]
+                        #:when (member (car x) '(drop take)))
+                x)
+              (set (list 'drop '())
+                   (list 'take '())))
+
+(check-equal? (for/set ([x (in-set (add-jump-to-definition/phase-level+space example-module-with-multiple-phases))]
+                        #:when (member (car x) '(drop take)))
+                x)
+              (set (list 'drop '() 1)
+                   (list 'take '() 0)))
+
+(check-equal? (for/set ([x (in-set
+                            (add-jump-to-definition/phase-level+space
+                             (string-append
+                              "#lang racket/base\n"
+                              "(require (for-space qq racket/list) racket/list (for-syntax racket/base))\n"
+                              "(define-syntax (in-qq stx) (syntax-case stx () [(_ x) ((make-interned-syntax-introducer 'qq) #'x)]))\n"
+                              "(in-qq first)\n")))]
+                        #:when (equal? (car x) 'first))
+                x)
+              (set (list 'first '() (cons 0 'qq))))
+
+
+(define no-require-visible-but-can-jump-to-definition #<<--
+#lang racket/base
+
+(module m racket
+  (define-syntax math (syntax-rules ()))
+  (require racket/math)
+  (define-syntax (scope stx)
+    (syntax-case stx ()
+      [(_ mth id)
+       (free-identifier=? #'mth #'math)
+       (syntax-property #'(void)
+                        'disappeared-use
+                        (datum->syntax #'here
+                                       (syntax-e #'id)
+                                       #'id
+                                       #'id))]))
+  (provide scope math))
+
+(require (submod "." m))
+(scope math sqr)
+(scope math pi)
+--
+  )
+(check-true (set-member? (add-jump-to-definition no-require-visible-but-can-jump-to-definition)
+                         (list 'sqr '())))
+(check-true (set-member? (add-jump-to-definition no-require-visible-but-can-jump-to-definition)
+                         (list 'pi '())))
+
+;                                                                                           
+;                                                                                           
+;                                                                                           
+;                                                                                           
+;                                                                                           
+;                                                                                           
+;        ;;;                                                                                
+;        ;;;                                                                                
+;        ;;;                                                                                
+;     ;; ;;;    ;;;;      ;;;;     ;;;;;        ;;; ;;;  ;;;     ;;;;    ;;; ;;;   ;;;  ;;; 
+;    ;;;;;;;   ;;;;;;    ;;;;;;   ;;;  ;;       ;;;;;;;;;;;;;   ;;;;;;   ;;;;;;;;  ;;;  ;;; 
+;   ;;;  ;;;  ;;;  ;;;  ;;;  ;;;  ;;;           ;;;  ;;;  ;;;  ;;;  ;;;  ;;;  ;;;  ;;;  ;;; 
+;   ;;;  ;;;  ;;;  ;;;  ;;;       ;;;;;;        ;;;  ;;;  ;;;  ;;;;;;;;  ;;;  ;;;  ;;;  ;;; 
+;   ;;;  ;;;  ;;;  ;;;  ;;;        ;;;;;;       ;;;  ;;;  ;;;  ;;;;;;;;  ;;;  ;;;  ;;;  ;;; 
+;   ;;;  ;;;  ;;;  ;;;  ;;;  ;;;      ;;;       ;;;  ;;;  ;;;  ;;;       ;;;  ;;;  ;;;  ;;; 
+;    ;;;;;;;   ;;;;;;    ;;;;;;   ;;  ;;;       ;;;  ;;;  ;;;   ;;;;;;;  ;;;  ;;;  ;;;;;;;; 
+;     ;; ;;;    ;;;;      ;;;;     ;;;;;        ;;;  ;;;  ;;;    ;;;;;   ;;;  ;;;   ;;; ;;; 
+;                                                                                           
+;                                                                                           
+;                                                                                           
+;                                                                                           
+;                                                                                           
+
+
+(define-get-arrows add-docs-menu
+  (syncheck:add-docs-menu src start end id label definition-tag path tag)
+  id)
+
+(check-equal? (add-docs-menu
+               (string-append
+                "#lang racket/base\n"
+                "(+ 1 2)"))
+              (set '#%datum '#%app '+))
+
+(check-equal? (add-docs-menu
+               (string-append
+                "#lang racket/base\n"
+                "(require (for-syntax racket/base))\n"
+                "(begin-for-syntax\n"
+                "  (λ (car cdr)"
+                "    #t))"))
+              (set '#%datum 'for-syntax 'λ 'require 'begin-for-syntax))
+
+(check-equal? (add-docs-menu
+               (string-append
+                "#lang racket/base\n"
+                "(require (for-syntax racket/match racket/base))\n"
+                "(begin-for-syntax\n"
+                "  (match 1 [_ 1]))"))
+              (set '#%datum 'for-syntax 'require 'match 'begin-for-syntax))
 
 
 ;                                 
@@ -638,10 +1103,37 @@
     (add-syntax (expand stx))
     (done)))
 
+;; ensure that the submodules argument gets correctly sent along
+;; in a syncheck:add-jump-to-definition/phase-level+space call
+(let ()
+  (define root-dir (make-temporary-directory "test-from-syncheck-direct-rkt~a"))
+  (define src (build-path root-dir "a.rkt"))
+  (call-with-output-file src
+    (λ (port)
+      (displayln "#lang racket/base\n" port)
+      (writeln '(require (submod "b.rkt" the-mod)) port)
+      (writeln 'the-name port)))
+  (call-with-output-file (build-path root-dir "b.rkt")
+    (λ (port)
+      (displayln "#lang racket/base\n" port)
+      (writeln '(module the-mod racket (provide the-name) (define the-name 1)) port)))
+
+  (define content
+    (parameterize ([current-directory root-dir])
+      (show-content "a.rkt")))
+
+  (check-true
+   (for/or ([item (in-list content)])
+     (match item
+       [(vector 'syncheck:add-jump-to-definition/phase-level+space _ _ 'the-name _ '(the-mod) _)
+        #t]
+       [_ #f])))
+  (delete-directory/files root-dir))
+
 ;; make sure that `make-traversal` is called with
 ;; the containing directory by `show-content`
 (let ()
-  (define root-dir (make-temporary-file "test-from-syncheck-direct-rkt~a" 'directory))
+  (define root-dir (make-temporary-directory "test-from-syncheck-direct-rkt~a"))
   (parameterize ([current-directory root-dir])
     (make-directory "test"))
   (define tmp-dir (build-path root-dir "test"))
@@ -718,9 +1210,9 @@
                    [p2-ele (in-list p2-eles)])
            (equal? p1-ele p2-ele))))
 
-  (for ([path (in-set paths)])
-    (when (path-extension-of? tmp-dir path)
-      (check-pred file-exists? path)))
+  (for ([path (in-set paths)]
+        #:when (path-extension-of? tmp-dir path))
+    (check-pred file-exists? path))
 
   (delete-directory/files root-dir))
 

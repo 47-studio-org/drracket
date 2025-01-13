@@ -26,6 +26,7 @@
          "rep.rkt"
          "eval-helpers-and-pref-init.rkt"
          "local-member-names.rkt"
+         (prefix-in lmn: "local-member-names.rkt")
          "insulated-read-language.rkt"
          drracket/private/rectangle-intersect
          pkg/lib
@@ -38,7 +39,7 @@
                                    (only-in mrlib/image-core
                                             render-image))))
 
-(struct exn-info (str src-vecs exn-stack missing-mods) #:prefab)
+(struct exn-info (str full-str src-vecs exn-stack missing-mods) #:prefab)
 
 ;; submodule to make these accessible to the test suite
 (module oc-status-structs racket/base
@@ -48,6 +49,7 @@
   (clean (or/c symbol? #f)
          (or/c (non-empty-listof
                 (exn-info string?
+                          string?
                           (listof (vector number? number?))
                           (listof string?)
                           (or/c #f module-path?)))
@@ -111,7 +113,7 @@
           [prefix drracket:language: drracket:language/int^]
           [prefix drracket:unit: drracket:unit^]
           [prefix drracket:rep: drracket:rep/int^]
-          [prefix drracket:init: drracket:init^]
+          [prefix drracket:init: drracket:init/int^]
           [prefix drracket:module-language-tools: drracket:module-language-tools/int^]
           [prefix drracket:modes: drracket:modes^]
           [prefix drracket: drracket:interface^])
@@ -137,7 +139,7 @@
   ;; collection-paths : (listof (union 'default string))
   ;; command-line-args : (vectorof string)
   ;; auto-text : string
-  (define-struct (module-language-settings drracket:language:simple-settings)
+  (define-struct (module-language-settings lmn:drracket:language:simple-settings)
     (collection-paths command-line-args auto-text compilation-on? full-trace? submodules-to-run
                       enforce-module-constants))
   
@@ -154,6 +156,19 @@
   (define default-submodules-to-run (list '(test) '(main)))
   (define default-enforce-module-constants #t)
   (define (get-default-auto-text) (preferences:get 'drracket:module-language:auto-text))
+
+  (define (disable-debugging-et-al language-settings)
+    (define lang
+      (drracket:language-configuration:language-settings-language language-settings))
+    (cond
+      [(is-a? lang module-language<%>)
+       (drracket:language-configuration:make-language-settings
+        lang
+        (struct-copy
+         module-language-settings
+         (drracket:language-configuration:language-settings-settings language-settings)
+         [annotations #:parent lmn:drracket:language:simple-settings 'none]))]
+      [else language-settings]))
   
   (define drracket-determined-width (make-parameter 'infinity))
   
@@ -221,8 +236,11 @@
           [(eq? key 'drscheme:autocomplete-words)
            (drracket:language-configuration:get-all-manual-keywords)]
           [(eq? key 'drscheme:define-popup)
-           '(("(define" "(define ...)" "δ")
-             ("(module" "(module ...)" "ρ"))]
+           (define the-irl (drracket:module-language-tools:capability-value-irl))
+           (call-read-language the-irl
+                               'drracket:define-popup
+                               '(("(define" "(define ...)" "δ")
+                                 ("(module" "(module ...)" "ρ")))]
           [else (drracket:language:get-capability-default key)]))
       
       ;; config-panel : as in super class
@@ -1092,7 +1110,7 @@
                 [else (error 'module-language.rkt "unknown clean status: ~s" running-status)]))
             (case (preferences:get pref-key)
               [(margin) 
-               (send (get-defs) set-margin-error-ranges
+               (send (get-defs) set-margin-error-ranges ;; FIX HERE
                      (set->list
                       (for*/set ([error-message+loc (in-list error-messages+locs)]
                                  [range (in-list (exn-info-src-vecs error-message+loc))])
@@ -1111,6 +1129,17 @@
                      (define span (vector-ref range 1))
                      (srcloc (get-defs) #f #f pos span))))))
         (send (get-defs) end-edit-sequence))
+
+      (define hide-bottom-bar-after-delay-timer (new timer%
+                                                     [notify-callback
+                                                      (lambda ()
+                                                        (when (and (clean? running-status)
+                                                                   (not (clean-error-messages+locs running-status)))
+                                                          (send (get-defs) hide-module-language-error-panel)))]))
+
+      (define/private (hide-bottom-bar-after-delay)
+        (send hide-bottom-bar-after-delay-timer stop)
+        (send hide-bottom-bar-after-delay-timer start 1000 #t))
       
       (define/private (update-bottom-bar)
         (cond
@@ -1119,17 +1148,19 @@
           [(and (dirty? running-status) our-turn?)
            (set-bottom-bar-status/blank)]
           [(and (dirty? running-status) (not our-turn?))
-           (send (get-defs) set-bottom-bar-status (list (exn-info "" '() '() #f)) #f #f)]
+           (send (get-defs) set-bottom-bar-status (list (exn-info "" "" '() '() #f)) #f #f)]
           [(clean? running-status)
            (if (clean-error-messages+locs running-status)
                (send (get-defs) set-bottom-bar-status 
                      (clean-error-messages+locs running-status)
                      #t #t)
-               (set-bottom-bar-status/blank))]))
+               (begin
+                 (set-bottom-bar-status/blank)
+                 (hide-bottom-bar-after-delay)))]))
       
       (define/private (set-bottom-bar-status/blank)
         (send (get-defs) set-bottom-bar-status
-              (list (exn-info "" '() '() #f))
+              (list (exn-info "" "" '() '() #f))
               #f
               #f))
       
@@ -1246,7 +1277,7 @@
       (define error/status-message-hidden? #t) 
       ; a list of triples (in a vector of size 3) of strings, srclocs, and stackframes (as strings)
       ; that show up in the bar and control the "jump to error" / next prev buttons
-      (define error/status-message-strs+srclocs (list (exn-info "" '() '() #f)))
+      (define error/status-message-strs+srclocs (list (exn-info "" "" '() '() #f)))
       (define error/status-index 0)
       
       ; if the string should be red/italic or just normal font
@@ -1316,7 +1347,7 @@
               (not (null? missing-mods))))
             
           (define (combine-msg vec)
-            (define msg (exn-info-str vec))
+            (define msg (exn-info-full-str vec))
             (define stack (exn-info-src-vecs vec))
             (apply
              string-append
@@ -1415,9 +1446,7 @@
                 (define pos (vector-ref range 0))
                 (define span (vector-ref range 1))
                 (highlight-range (- pos 1) (+ pos span -1)
-                                 (if (preferences:get 'framework:white-on-black?)
-                                     (make-object color% 145 107 0)
-                                     "gold")))))
+                                 'drracket:gold-error-background-highlighting))))
       
       (define/public (set-margin-error-ranges rngs)
         (unless (equal? online-error-ranges rngs)
@@ -1826,7 +1855,7 @@
         (cond
           [tooltip-labels-to-show
            (unless tooltip-frame
-             (set! tooltip-frame (new tooltip-frame%)))
+             (set! tooltip-frame (new tooltip-frame% [frame-to-track this])))
            (send tooltip-frame set-tooltip tooltip-labels-to-show)
            (define-values (rx ry) (send running-canvas client->screen 0 0))
            (define-values (cw ch) (send running-canvas get-client-size))
@@ -1998,8 +2027,8 @@
                                          (if err? "firebrick" "black")))
         (define-values (tot-th gap-space) (height/gap-space dc))
         (for/fold ([y (- (/ ch 2) (/ tot-th 2))]) ([msg (in-list msgs)])
-          (define-values (tw th td ta) (send dc get-text-extent msg))
-          (send dc draw-text msg 2 y)
+          (define-values (tw th td ta) (send dc get-text-extent msg #f 'grapheme))
+          (send dc draw-text msg 2 y 'grapheme)
           (+ y th gap-space)))
       (super-new [style '(transparent)])
       
@@ -2043,41 +2072,6 @@
       (inherit min-height)
       (set-the-height/dc-font
        (editor:get-current-preferred-font-size))))
-  
-  (define yellow-message%
-    (class canvas%
-      (inherit get-dc refresh get-client-size
-               min-width min-height
-               get-parent)
-      (define labels '(""))
-      (define/public (set-lab _ls) 
-        (unless (equal? labels _ls)
-          (set! labels _ls)
-          (update-size)
-          (refresh)))
-      (define/private (update-size)
-        (define dc (get-dc))
-        (send dc set-font small-control-font)
-        (define-values (w h _1 _2) (send dc get-text-extent (car labels)))
-        (send (get-parent) begin-container-sequence)
-        (min-width (+ 5 (inexact->exact (ceiling w))))
-        (min-height (+ 5 (* (length labels) (inexact->exact (ceiling h)))))
-        (send (get-parent) end-container-sequence)
-        (send (get-parent) reflow-container))
-      (define/override (on-paint)
-        (define dc (get-dc))
-        (send dc set-font small-control-font)
-        (define-values (w h) (get-client-size))
-        (define-values (tw th _1 _2) (send dc get-text-extent (car labels)))
-        (send dc set-pen "black" 1 'transparent)
-        (send dc set-brush "LemonChiffon" 'solid)
-        (send dc set-pen "black" 1 'solid)
-        (send dc draw-rectangle 0 0 (- w 1) (- h 1))
-        (for ([label (in-list labels)]
-              [i (in-naturals)])
-          (send dc draw-text label 2 (+ 2 (* i th)))))
-      (super-new [stretchable-width #f] [stretchable-height #f])))
-
   
   ;; get-current-oc-state : -> (or/c tab #f) (or/c tab #f) (listof tab) (listof tab)
   ;; the tabs in the results are only those that are in the module language
@@ -2304,6 +2298,7 @@
          (send dirty/pending-tab set-oc-status
                (clean 'exn
                       (list (exn-info sc-only-raw-text-files-supported
+                                      sc-only-raw-text-files-supported
                                       (list (vector (+ filename/loc 1) 1))
                                       '()
                                       #f))
@@ -2342,10 +2337,11 @@
          (send running-tab set-oc-status
                (clean (vector-ref res 0)
                       (if (equal? (vector-ref res 0) 'abnormal-termination)
-                          (list (exn-info (if (regexp-match #rx"memory" (vector-ref res 1))
-                                              sc-abnormal-termination-out-of-memory
-                                              sc-abnormal-termination)
-                                          '() '() #f))
+                          (let ([msg
+                                 (if (regexp-match #rx"memory" (vector-ref res 1))
+                                     sc-abnormal-termination-out-of-memory
+                                     sc-abnormal-termination)])
+                            (list (exn-info msg msg '() '() #f)))
                           (vector-ref res 1))
                       #f))
          (send running-tab set-dep-paths (list->set (vector-ref res 2)) #t)])
@@ -2623,7 +2619,7 @@
                 (get-admin))
            (define admin (get-admin))
            (define dc (get-dc))
-           (define-values (tw th _1 _2) (send dc get-text-extent id defs/ints-font))
+           (define-values (tw th _1 _2) (send dc get-text-extent id defs/ints-font 'grapheme))
            (define-values (mx my) (dc-location-to-editor-location 
                                    (send evt get-x) (send evt get-y)))
            (send admin get-view bx by bw bh)
@@ -2656,9 +2652,9 @@
               (when (rectangles-intersect?
                      left top right bottom
                      tx ty (+ tx tw) (+ ty th))
-                (send dc set-text-foreground "black")
+                (send dc set-text-foreground (if (white-on-black-panel-scheme?) "white" "black"))
                 (send dc set-alpha (* fade-amount .5))
-                (send dc draw-text id (+ dx tx) (+ dy ty))
+                (send dc draw-text id (+ dx tx) (+ dy ty) 'grapheme)
                 (send dc set-alpha α)
                 (send dc set-text-foreground fore))
               (send dc set-font defs/ints-font)))))
@@ -2710,7 +2706,8 @@
   (define module-language-parallel-lock-client
     (compile-lock->parallel-lock-client
      module-language-compile-lock
-     (current-custodian)))
+     (current-custodian)
+     current-parallel-lock-shutdown-evt))
   
   ;; in-module-language : (or/c top-level-window<%> #f) -> module-language-settings or #f
   (define (in-module-language tlw)
