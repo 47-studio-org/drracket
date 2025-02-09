@@ -48,7 +48,7 @@ TODO
   (parameterize-break #f (current-break-parameterization)))
 
 (define-unit rep@
-  (import [prefix drracket:init: drracket:init^]
+  (import [prefix drracket:init: drracket:init/int^]
           [prefix drracket:language-configuration: drracket:language-configuration/internal^]
           [prefix drracket:language: drracket:language/int^]
           [prefix drracket:app: drracket:app^]
@@ -59,6 +59,7 @@ TODO
           [prefix drracket:debug: drracket:debug/int^]
           [prefix drracket:eval: drracket:eval^]
           [prefix drracket:module-language: drracket:module-language/int^]
+          [prefix drracket:module-language-tools: drracket:module-language-tools/int^]
           [prefix drracket: drracket:interface^])
   (export (rename drracket:rep/int^
                   [-text% text%]
@@ -197,10 +198,14 @@ TODO
             [else
              (let* ([l (send obj get-canvas)]
                     [l (and l (send l get-top-level-window))]
-                    [l (and l (is-a? l drracket:unit:frame<%>) (send l get-definitions-text))]
-                    [l (and l (send l get-next-settings))]
+                    [defs (and l (is-a? l drracket:unit:frame<%>) (send l get-definitions-text))]
+                    [l (and defs (send defs get-next-settings))]
                     [l (and l (drracket:language-configuration:language-settings-language l))]
-                    [ctxt (and l (send l capability-value 'drscheme:help-context-term))]
+                    [ctxt (and l
+                               (drracket:module-language-tools:call-capability-value
+                                l
+                                defs
+                                'drscheme:help-context-term))]
                     [name (and l (send l get-language-name))])
                (drracket:help-desk:help-desk
                 str (and ctxt (list ctxt name)) frame))])]
@@ -344,13 +349,11 @@ TODO
     warning-style-delta)
   (define (get-welcome-delta) (make-object style-delta% 'change-family 'decorative))
   (define (get-dark-green-delta)
-    (define dark-green-delta (make-object style-delta%))
-    (send* dark-green-delta
-      (copy (get-welcome-delta))
-      (set-delta-foreground
-       (color-prefs:lookup-in-color-scheme
-        'drracket:language-name-and-memory-use-at-top-of-interactions)))
-    dark-green-delta)
+    (send (color-prefs:lookup-in-color-scheme
+           'drracket:language-name-and-memory-use-at-top-of-interactions)
+          set-delta
+          'change-family
+          'decorative))
   
   ;; is-default-settings? : language-settings -> boolean
   ;; determines if the settings in `language-settings'
@@ -424,7 +427,8 @@ TODO
     (send text insert s before before #f)
     (define after (send text last-position))
     (for ([delta (in-list deltas)])
-      (when (is-a? delta style-delta%)
+      (when (or (is-a? delta style-delta%)
+                (is-a? delta style<%>))
         (send text change-style delta before after)))
     (values before after))
   
@@ -652,7 +656,7 @@ TODO
               (define start (- (srcloc-position loc) 1))
               (define span (srcloc-span loc))
               (define finish (+ start span))
-              (send file highlight-range start finish (drracket:debug:get-error-color) #f 'high)))
+              (send file highlight-range start finish 'drracket:error-background-highlighting #f 'high)))
           (when (and definitions-text error-arrows)
             (let ([filtered-arrows
                    (remove-duplicate-error-arrows
@@ -703,13 +707,13 @@ TODO
           (send source begin-edit-sequence #t #f)
           
           (clear-error-highlighting) ;; clear the 'highlight-range' from previous errors
-          
+
           (define start (- (srcloc-position loc) 1))
           (define span (srcloc-span loc))
           (define finish (+ start span))
-          
+
           (let ([reset (send source highlight-range start finish
-                             (drracket:debug:get-error-color)
+                             (drracket:debug:get-error-color-name)
                              #f 'high)])
             (set! clear-error-highlighting
                   (λ ()
@@ -1037,18 +1041,20 @@ TODO
         (send context set-breakables #f #f))
       
       (define/augment (submit-to-port? key)
-        (or (send key get-control-down)
-            (send key get-alt-down)
-            (and prompt-position
-                 (let ([pred (get-insulated-submit-predicate (send definitions-text get-irl))])
-                   (cond
-                     [pred
-                      (pred 
-                       (open-input-text-editor this prompt-position)
-                       (only-whitespace-after-insertion-point))]
-                     [else
-                      (and (only-whitespace-after-insertion-point)
-                           (submit-predicate this prompt-position))])))))
+        (cond
+          [(or (send key get-control-down) (send key get-alt-down)) #t]
+          [(send key get-shift-down) #f]
+          [prompt-position
+           (define pred (get-insulated-submit-predicate (send definitions-text get-irl)))
+           (cond
+             [pred
+              (pred
+               (open-input-text-editor this prompt-position)
+               (only-whitespace-after-insertion-point))]
+             [else
+              (and (only-whitespace-after-insertion-point)
+                   (submit-predicate this prompt-position))])]
+          [else #f]))
       
       (define/private (only-whitespace-after-insertion-point)
         (let ([start (get-start-position)]
@@ -1679,7 +1685,7 @@ TODO
         (current-load-relative-directory #f)
         (current-custodian user-custodian)
         (current-load text-editor-load-handler)
-        
+
         (drracket:eval:set-basic-parameters snip-classes)
         (current-rep this)
         (let ([dir (or (send context get-directory)
@@ -1773,27 +1779,34 @@ TODO
         
         (set! setting-up-repl? #t)
         (define welcome-delta (get-welcome-delta))
-        (define dark-green-delta (get-dark-green-delta))
+        (define dark-green-delta
+          (send (editor:get-standard-style-list) find-named-style
+                "drracket:language name and memory use at top of interactions"))
         (insert/delta this (string-append (string-constant language) ": ") welcome-delta)
         (let-values (((before after)
                       (insert/delta
                        this
                        (extract-language-name user-language-settings definitions-text)
                        dark-green-delta
+                       welcome-delta
                        (extract-language-style-delta user-language-settings)))
                      ((url) (extract-language-url user-language-settings)))
           (when url
             (set-clickback before after (λ args (send-url url))
                            (click-delta))))
+
         (unless (is-default-settings? user-language-settings)
-          (insert/delta this (string-append " [" (string-constant custom) "]") dark-green-delta))
+          (insert/delta this (string-append " [" (string-constant custom) "]")
+                        dark-green-delta
+                        welcome-delta))
         (when custodian-limit
           (insert/delta this 
                         (format "~a " (string-constant memory-limit))
                         welcome-delta)
           (insert/delta this
                         (format "~a MB" (floor (/ custodian-limit 1024 1024)))
-                        dark-green-delta))
+                        dark-green-delta
+                        welcome-delta))
         (insert/delta this ".\n" welcome-delta)
         
         (let ([osf (get-styles-fixed)])
@@ -1843,7 +1856,10 @@ TODO
            (define name (send definitions-text get-port-name))
            (define settings
              (drracket:language-configuration:language-settings-settings user-language-settings))
-           (define prog-port (open-input-string (send lang get-auto-text settings) name))
+           (define hash-lang-str (or (fetch-hash-lang-str definitions-text)
+                                     (send lang get-auto-text settings)))
+           (when (regexp-match? #rx"^#lang pollen" hash-lang-str) (set! hash-lang-str "#lang racket/base"))
+           (define prog-port (open-input-string hash-lang-str name))
            (port-count-lines! prog-port)
            (parameterize ([module-language-initial-run #t])
              (evaluate-from-port
@@ -2233,7 +2249,7 @@ TODO
               (when (and (error-print-source-location)
                          (syntax? expr))
                 (insert/delta text " in: ")
-                (insert/delta text (format "~s" (syntax->datum expr)) (get-error-text-style-delta)))
+                (insert/delta text ((error-syntax->string-handler) expr #f) (get-error-text-style-delta)))
               (insert/delta text "\n")
               (when (and (is-a? src text:basic<%>)
                          (number? pos)
@@ -2299,7 +2315,10 @@ TODO
           (let* ([definitions-text (get-defs this)]
                  [settings (send definitions-text get-next-settings)]
                  [language (drracket:language-configuration:language-settings-language settings)])
-            (send language capability-value 'drscheme:autocomplete-words)))
+            (drracket:module-language-tools:call-capability-value
+             language
+             definitions-text
+             'drscheme:autocomplete-words)))
         (super-new))))
   
   (define -text% 
@@ -2416,3 +2435,9 @@ TODO
                   (make-object string-snip% "c"))])
     (check-equal? (simplify-history-element in #t)
                   (old-conversion-code in))))
+
+(define (fetch-hash-lang-str definitions-text)
+  (define the-irl (send definitions-text get-irl))
+  (define-values (before after)
+    (get-read-language-port-start+end (send definitions-text get-irl)))
+  (and after (send definitions-text get-text 0 after)))

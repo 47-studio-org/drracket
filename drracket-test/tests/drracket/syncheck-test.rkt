@@ -35,12 +35,18 @@
   ;; When either `new-name` or `output` is `#f`, only test that `old-name` is on the menu
   (define-struct rename-test (line input pos old-name new-name output) #:transparent)
   (define-struct prefix-test (line input pos prefix output) #:transparent)
+  (define-struct err-test (line input expected locations) #:transparent)
   
-  (define build-test/proc
-    (λ (line input expected [arrow-table '()] #:tooltips [tooltips #f] 
-             #:setup [setup void] #:teardown [teardown void] #:extra-files [extra-files (hash)]
-             #:extra-info? [extra-info? #f])
-      (make-test line input expected arrow-table tooltips setup teardown extra-files extra-info?)))
+  (define (build-test/proc line
+                           input
+                           expected
+                           [arrow-table '()]
+                           #:tooltips [tooltips #f]
+                           #:setup [setup void]
+                           #:teardown [teardown void]
+                           #:extra-files [extra-files (hash)]
+                           #:extra-info? [extra-info? #f])
+    (make-test line input expected arrow-table tooltips setup teardown extra-files extra-info?))
   
   (define-syntax (build-test stx)
     (syntax-case stx ()
@@ -66,6 +72,13 @@
        (with-syntax ([line (syntax-line stx)])
          ;; #f is for the tooltip portion of the test, just skip 'em
          #'(make-dir-test line args ... #f void void (hash) #f))]))
+
+  (define-syntax (build-err-test stx)
+    (syntax-case stx ()
+      [(_ input expected locations)
+       (with-syntax ([line (syntax-line stx)])
+         ;; #f is for the tooltip portion of the test, just skip 'em
+         #'(make-err-test line input expected locations))]))
   
   ;; tests : (listof test)
   (define tests
@@ -94,6 +107,16 @@
                   (")"      default-color))
                 (list '((9 10) (12 13)))
                 #:tooltips '((9 10 "1 bound occurrence")))
+     (build-test "(lambda (🏴‍☠️) 🏴‍☠️)"
+                '(("("      default-color)
+                  ("lambda" imported-syntax)
+                  (" ("     default-color)
+                  ("🏴‍☠️"      lexically-bound-variable)
+                  (") "     default-color)
+                  ("🏴‍☠️"      lexically-bound-variable)
+                  (")"      default-color))
+                (list '((9 13) (15 19)))
+                #:tooltips '((9 13 "1 bound occurrence")))
      (build-test "(lambda x x)"
                 '(("("      default-color)
                   ("lambda" imported-syntax)
@@ -903,7 +926,9 @@
                    ("rename"                    lexically-bound)
                    (" #f) ("                    default-color)
                    ("require"                   imported)
-                   (" (rename mzscheme ++ +)))" default-color))
+                   (" (rename mzscheme "        default-color)
+                   ("++"                        imported)
+                   (" +)))"                     default-color))
                  
                  (list '((10 18) (20 33) (46 53))))
      
@@ -965,11 +990,13 @@
                    ("module" imported)
                    (" n racket " default-color)
                    ("list" imported)
-                   (") (module+ o " default-color)
+                   (") (" default-color)
+                   ("module+" imported)
+                   (" o " default-color)
                    ("list" imported)
                    ("))" default-color))
                  (list 
-                  '((10 16) (18 24) (51 55))
+                  '((10 16) (18 24) (41 48) (51 55))
                   '((27 33) (34 38))))
      
      ;; test case from Chongkai
@@ -1111,11 +1138,25 @@
                    ("define"               imported)
                    (" "                    default-color)
                    ("red"                  lexically-bound)
-                   (" 1)\n(module+ test "  default-color)
+                   (" 1)\n("               default-color)
+                   ("module+"              imported)
+                   (" test "               default-color)
                    ("red"                  imported)
                    (")"                    default-color))
                  '(((26 29) (47 50))
-                   ((6 17) (19 25) (30 30))))
+                   ((6 17) (19 25) (30 30) (34 41))))
+     (build-test "#lang racket/base\n(define 🏴‍☠️🏴‍☠️🏴‍☠️ 1)\n(module+ test 🏴‍☠️🏴‍☠️🏴‍☠️)"
+                 '(("#lang racket/base\n(" default-color)
+                   ("define"               imported)
+                   (" "                    default-color)
+                   ("🏴‍☠️🏴‍☠️🏴‍☠️"                  lexically-bound)
+                   (" 1)\n("               default-color)
+                   ("module+"              imported)
+                   (" test "               default-color)
+                   ("🏴‍☠️🏴‍☠️🏴‍☠️"                  imported)
+                   (")"                    default-color))
+                 '(((26 38) (56 68))
+                   ((6 17) (19 25) (39 39) (43 50))))
      
      (build-test "#lang racket/base\n(require '#%kernel)\npair?"
                  '(("#lang racket/base\n(" default-color)
@@ -1394,13 +1435,26 @@
                         45
                         "x."
                         "(module m racket/base (require (prefix-in x. racket/list)) x.first)")
+     (build-prefix-test "(module m racket/base (require racket/list) first)"
+                        48
+                        "🏴‍☠️."
+                        "(module m racket/base (require (prefix-in 🏴‍☠️. racket/list)) 🏴‍☠️.first)")
      
      (build-rename-test "(lambda (x) x)"
                         9
                         "x"
                         "y"
                         "(lambda (y) y)")
-     
+     (build-rename-test "(lambda (x) x)"
+                        9
+                        "x"
+                        "🏴‍☠️"
+                        "(lambda (🏴‍☠️) 🏴‍☠️)")
+     (build-rename-test "(lambda (🏴‍☠️) 🏴‍☠️)"
+                        9
+                        "🏴‍☠️"
+                        "y"
+                        "(lambda (y) y)")
      (build-rename-test "(lambda (x) x)"
                         9
                         "x"
@@ -1552,20 +1606,30 @@
      (build-rename-test
       (string-append
        "#lang racket\n"
-       "(require racket/list)\n")
-      14
-      "require"
-      #f
-      #f)
+       "(define cons 5)\n"
+       "(quote-syntax cons)\n"
+       "(define-syntax x #f)\n")
+      44
+      "cons"
+      "abc"
+      (string-append
+       "#lang racket\n"
+       "(define abc 5)\n"
+       "(quote-syntax abc)\n"
+       "(define-syntax x #f)\n"))
 
      (build-rename-test
       (string-append
        "#lang racket\n"
-       "(require racket/list)\n")
-      20
-      "require"
-      #f
-      #f)
+       "(require (rename-in racket/base [cons abcdef]))\n"
+       "abcdef")
+      62
+      "abcdef"
+      "xyz"
+      (string-append
+       "#lang racket\n"
+       "(require (rename-in racket/base [cons xyz]))\n"
+       "xyz"))
 
      (build-test
       #:extra-files
@@ -1644,11 +1708,58 @@
         (")\n" default-color))
       (list '((6 17) (19 26))
             '((27 34) (37 38))
-            '((39 42) (43 46))))))
+            '((39 42) (43 46))))
+
+     (build-err-test "(module m racket/base free-var)" #rx"free-var: unbound"
+                     (set (list 23 8)))
+     (build-err-test "#|🏴‍☠️|#(module m racket/base free-var)" #rx"free-var: unbound"
+                     (set (list 31 8)))
+
+     (build-test
+      #:extra-files
+      (hash "mouse-over-tooltips.rkt"
+            (with-output-to-string
+              (λ ()
+                (displayln "#lang racket/base")
+                (writeln '(require (for-syntax racket/base)))
+                (pretty-write
+                 '(define-syntax (char-span-bad-source stx)
+                    (syntax-case stx ()
+                      [(_ a)
+                       (syntax-property
+                        #'a
+                        'mouse-over-tooltips
+                        (vector
+                         (datum->syntax stx
+                                        (syntax-e stx)
+                                        (vector
+                                         "/file/that/does/not/exist.rkt"
+                                         (syntax-line stx)
+                                         (syntax-column stx)
+                                         (syntax-position stx)
+                                         (syntax-span stx))
+                                        stx)
+                         (sub1 (syntax-position stx))
+                         (sub1 (+ (syntax-position stx)
+                                  (syntax-span stx)))
+                         (format "this expression\nspans ~a chars"
+                                 (syntax-span stx))))])))
+                (write `(provide char-span-bad-source)))))
+      (string-append "#lang racket/base\n"
+                     "(require \"mouse-over-tooltips.rkt\")\n"
+                     "(char-span-bad-source 12345)\n")
+      '(("#lang racket/base\n(" default-color)
+        ("require" imported)
+        (" \"mouse-over-tooltips.rkt\")\n(" default-color)
+        ("char-span-bad-source" imported)
+        (" 12345)\n" default-color))
+      (list '((6 17) (19 26) (76 76))
+            '((27 52) (55 75))))
+     ))
 
 
   (define (main)
-    (define temp-dir (normalize-path (make-temporary-file "syncheck-test~a" 'directory)))
+    (define temp-dir (normalize-path (make-temporary-directory "syncheck-test~a")))
     (dynamic-wind
      void
      (λ ()
@@ -1838,7 +1949,38 @@
            (unless (equal? result (prefix-test-output test))
              (eprintf "syncheck-test.rkt FAILED\n   test ~s\n  got ~s\n" 
                       test
-                      result)))])))
+                      result)))]
+        [(err-test? test)
+         (let/ec done
+           (insert-in-definitions drs (err-test-input test))
+           (define err (click-check-syntax-and-check-errors drs test #f #:err-ok? #t))
+           (unless err
+             (eprintf "syncheck-test.rkt FAILED\n   test ~s\n   didn't get an error\n"
+                      test)
+             (done))
+           (define expected (err-test-expected test))
+           (define message-good?
+             (cond
+               [(string? expected)
+                (equal? expected err)]
+               [else
+                (regexp-match? expected err)]))
+           (unless message-good?
+             (eprintf "syncheck-test.rkt FAILED error doesn't match\n   test ~s\n   ~s\n"
+                      test
+                      err)
+             (done))
+           (define srclocs (queue-callback/res (λ () (send (send drs get-interactions-text) get-error-ranges))))
+           (define actual
+             (for/set ([srcloc (in-list srclocs)])
+               (list (srcloc-position srcloc)
+                     (srcloc-span srcloc))))
+           (unless (equal? actual (err-test-locations test))
+             (eprintf "syncheck-test.rkt FAILED srclocs don't match\n   test ~s\n   actual ~s\n   got    ~s\n"
+                      test
+                      actual
+                      (err-test-locations test)))
+           (void))])))
   
   (define (path->require-string relative)
     (define (p->string p)
@@ -1982,17 +2124,21 @@
   (define (get-annotated-output drs)
     (queue-callback/res (λ () (get-string/style-desc (send drs get-definitions-text)))))
   
-  (define (click-check-syntax-and-check-errors drs test extra-info?)
+  (define (click-check-syntax-and-check-errors drs test extra-info? #:err-ok? [err-ok? #f])
     (click-check-syntax-button drs extra-info?)
     (wait-for-computation drs)
     (when (queue-callback/res (λ () (send (send drs get-definitions-text) in-edit-sequence?)))
       (error 'syncheck-test.rkt "still in edit sequence for ~s" test))
-    
-    (let ([err (queue-callback/res (λ () (send drs syncheck:get-error-report-contents)))]) 
-      (when err
-        (eprintf "FAILED ~s\n   error report window is visible:\n   ~a\n"
-                 test
-                 err))))
+
+    (define err (queue-callback/res (λ () (send drs syncheck:get-error-report-contents))))
+    (cond
+      [err-ok?
+       err]
+      [else
+       (when err
+         (eprintf "FAILED ~s\n   error report window is visible:\n   ~a\n"
+                  test
+                  err))]))
   
   (define (click-check-syntax-button drs extra-info?)
     (test:run-one (lambda () (send drs syncheck:button-callback #:print-extra-info? extra-info?))))

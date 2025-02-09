@@ -28,7 +28,8 @@
   when-initialized
   initialize-module-language
   ;move-to-new-language
-  get-in-module-language?)
+  get-in-module-language?
+  get-indentation-function)
 
 ;; for keybindings (otherwise private)
 (define/provide-local-member-name
@@ -56,12 +57,15 @@
   fetch-data-to-send
   clear-old-error
   set-bottom-bar-status
+  update-func-defs
   
   get-oc-status
   set-oc-status
   
   set-dep-paths
-  set-dirty-if-dep)
+  set-dirty-if-dep
+
+  update-comment-out-menu-items)
 
 ;; mode changing definitions text mixin
 (define/provide-local-member-name
@@ -95,3 +99,6 @@
 
 (provide (struct-out drracket:modes:mode))
 (struct drracket:modes:mode (name surrogate repl-submit matches-language intended-to-edit-programs?))
+
+(provide start-new-tab-in-edit-sequence?)
+(define start-new-tab-in-edit-sequence? (make-parameter #f))

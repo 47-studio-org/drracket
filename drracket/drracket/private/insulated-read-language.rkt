@@ -22,6 +22,7 @@ Will not work with the definitions text surrogate interposition that
          racket/match
          racket/port
          syntax-color/racket-lexer
+         syntax-color/lexer-contract
          drracket/syncheck-drracket-button
          (for-syntax racket/base))
 
@@ -29,6 +30,8 @@ Will not work with the definitions text surrogate interposition that
   (or/c 'drracket:default-filters
         'drracket:default-extension
         'drracket:indentation
+        'drracket:range-indentation
+        'drracket:grouping-position
         'drracket:keystrokes
         'drracket:show-big-defs/ints-labels
         'drracket:submit-predicate
@@ -38,7 +41,11 @@ Will not work with the definitions text surrogate interposition that
         'drscheme:opt-out-toolbar-buttons
         'drracket:opt-in-toolbar-buttons
         'color-lexer
-        'definitions-text-surrogate))
+        'definitions-text-surrogate
+        'drracket:paren-matches
+        'drracket:quote-matches
+        'drracket:comment-delimiters
+        'drracket:define-popup))
 
 (provide
  (contract-out
@@ -176,23 +183,51 @@ Will not work with the definitions text surrogate interposition that
                    'call-read-language/inside key default))
   (case key
     [(color-lexer)
+     (define (failing-lexer in)
+       (define-values (_1 _2 pos) (port-next-location in))
+       (define c (read-char in))
+       (cond
+         [(eof-object? c)
+          (values c 'eof #f #f #f)]
+         [else
+          (values (string c)
+                  'error
+                  #f
+                  pos
+                  (+ pos 1))]))
      (cond
        [(procedure-arity-includes? val 3)
-        (λ (port offset mode)
+        (λ (in in-start-pos lexer-mode)
           (call-in-irl-context/abort
            an-irl
            (λ ()
-             (let-values ([(a b c d e) (racket-lexer (open-input-string "\""))])
-               (values a b c d e #f 0)))
+             (define-values (a b c d e) (failing-lexer in))
+             (values a b c d e 0 #f))
            (λ ()
-             (val port offset mode))))]
+             (define-values (_line1 _col1 pos-before) (port-next-location in))
+             (define-values (lexeme type data new-token-start new-token-end
+                                    backup-delta new-lexer-mode/cont)
+               (val in in-start-pos lexer-mode))
+             (define-values (_line2 _col2 pos-after) (port-next-location in))
+             (check-colorer-results-match-port-before-and-after
+              'color:text<%>
+              type pos-before new-token-start new-token-end pos-after)
+             (values lexeme type data new-token-start new-token-end
+                     backup-delta new-lexer-mode/cont))))]
        [else
-        (λ (port)
+        (λ (in)
           (call-in-irl-context/abort
            an-irl
-           (λ () (racket-lexer (open-input-string "\"")))
+           (λ () (failing-lexer in))
            (λ ()
-             (val port))))])]
+             (define-values (_line1 _col1 pos-before) (port-next-location in))
+             (define-values (lexeme type data new-token-start new-token-end)
+               (val in))
+             (define-values (_line2 _col2 pos-after) (port-next-location in))
+             (check-colorer-results-match-port-before-and-after
+              'color:text<%>
+              type pos-before new-token-start new-token-end pos-after)
+             (values lexeme type data new-token-start new-token-end))))])]
     [(drracket:submit-predicate)
      (and val
           (λ (port only-whitespace?)
@@ -207,15 +242,57 @@ Will not work with the definitions text surrogate interposition that
              an-irl
              (λ () #f)
              (λ () (val txt pos)))))]
+    [(drracket:range-indentation)
+     (and val
+          (λ (txt start-pos end-pos)
+            (call-in-irl-context/abort
+             an-irl
+             (λ () #f)
+             (λ () (val txt start-pos end-pos)))))]
+    [(drracket:grouping-position)
+     (and val
+          (λ (text start-position limit-position direction)
+            (call-in-irl-context/abort
+             an-irl
+             (λ () #t)
+             (λ () (val text start-position limit-position direction)))))]
     [(drracket:keystrokes)
      (for/list ([pr (in-list val)])
        (define key (list-ref pr 0))
        (define proc (list-ref pr 1))
-       (list key (λ (txt evt)
-                   (call-in-irl-context/abort
-                    an-irl
-                    void
-                    (λ () (proc txt evt))))))]
+       (list key (procedure-rename
+                  (λ (txt evt)
+                    (call-in-irl-context/abort
+                     an-irl
+                     void
+                     (λ () (proc txt evt))))
+                  (object-name proc))))]
+    [(drracket:paren-matches)
+     (or val racket:default-paren-matches)]
+    [(drracket:quote-matches)
+     (or val (list #\" #\|))]
+    [(drracket:comment-delimiters) val]
+    [(drracket:define-popup)
+     (and val
+          (for/list ([val (in-list val)])
+            (match val
+              [(list n1 n2 n3) val]
+              [(list n1 n2 n3 p1 p2)
+               (list n1 n2 n3
+                     (and p1
+                          (λ (a b c f)
+                            (call-in-irl-context/abort
+                             an-irl
+                             (λ () #f)
+                             (λ () (p1 a b c f)))))
+                     (and p2
+                          (λ (a b f)
+                            (call-in-irl-context/abort
+                             an-irl
+                             (λ () "<<no name>>") ;; we shouldn't
+                             ;; ever see this string because
+                             ;; the procedure above always returns #f
+                             (λ () (p2 a b f))))))])))]
     [else
      val]))
   
@@ -270,20 +347,21 @@ Will not work with the definitions text surrogate interposition that
     (for ([lang (in-list all-languages)])
       (define lang-spec (send lang get-reader-module))
       (when lang-spec
-        (let* ([lines (send lang get-metadata-lines)]
-               [str (send text get-text
-                          0
-                          (send text paragraph-end-position (- lines 1)))]
-               [sp (open-input-string str)])
-          (when (regexp-match #rx"#reader" sp)
-            (define spec-in-file (read sp))
-            (when (equal? lang-spec spec-in-file)
-              (set! found-language? lang)
-              (set! settings (send lang metadata->settings str))
-              (send text while-unlocked
-                    (λ () 
-                      (send text delete 0
-                            (send text paragraph-start-position lines)))))))))
+        (define lines (send lang get-metadata-lines))
+        (define str
+          (send text get-text
+                0
+                (send text paragraph-end-position (- lines 1))))
+        (define sp (open-input-string str))
+        (when (regexp-match #rx"#reader" sp)
+          (define spec-in-file (read sp))
+          (when (equal? lang-spec spec-in-file)
+            (set! found-language? lang)
+            (set! settings (send lang metadata->settings str))
+            (send text while-unlocked
+                  (λ () 
+                    (send text delete 0
+                          (send text paragraph-start-position lines))))))))
       
     ;; check to see if it looks like the module language.
     (unless found-language?

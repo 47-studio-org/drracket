@@ -43,7 +43,8 @@
            has-error?
            run-one/sync
            alt-return-in-interactions
-           wait-for-online-compilation-to-finish)
+           wait-for-online-compilation-to-finish
+           set-focus-and-wait)
   
   ;; save-drracket-window-as : string -> void
   ;; use the "save as" dialog in drracket to save the definitions
@@ -128,8 +129,15 @@
                                            source line)))
                 timeout))
     (when fr (wait-for-events-in-frame-eventspace fr))
-    (sleep 1)
     fr)
+
+(define (set-focus-and-wait window)
+  (not-on-eventspace-handler-thread 'set-focus-and-wait)
+  (queue-callback (λ () (send window focus)))
+  (define (waiting-for-focus)
+    (queue-callback/res
+     (λ () (send window has-focus?))))
+  (poll-until waiting-for-focus))
 
 (define-syntax (wait-for-new-frame stx)
   (syntax-case stx ()
@@ -437,7 +445,7 @@
           (fw:test:button-push "OK")
           (let ([new-frame (wait-for-new-frame language-dialog)])
             (unless (eq? new-frame drs-frame)
-              (error 'set-language-level! 
+              (error 'set-module-language!
                      "didn't get drracket frame back, got: ~s (drs-frame ~s)\n"
                      new-frame
                      drs-frame)))))))
@@ -641,6 +649,7 @@
                      (if (exn? x)
                          (orig-display-handler (exn-message x) x)
                          (eprintf "uncaught exception ~s\n" x))
+                     (sleep/yield 0.1)
                      (exit 1))))
                 (run-test)
                 (test-log #:display? #t #:exit? #t)

@@ -66,7 +66,8 @@
 (: make-large-letters-dialog (String Char (Option (Instance Frame%)) -> (Option String)))
 (define (make-large-letters-dialog comment-prefix comment-character parent)
   (define dlg (new (frame:focus-table-mixin dialog%)
-                   [parent parent] 
+                   [parent parent]
+                   [style '(close-button)]
                    [width 700]
                    [label (string-constant large-semicolon-letters)]))
   (define: text-field : (Instance Text-Field%) 
@@ -147,15 +148,18 @@
                                  (λ (x y) (send dlg show #f))))
   (: update-txt (String -> Any))
   (define (update-txt str)
+    (send dlg begin-container-sequence)
     (send txt begin-edit-sequence)
     (send txt lock #f)
     (send txt delete 0 (send txt last-position))
     (let ([bm (render-large-letters comment-prefix comment-character (get-chosen-font) str txt #t)])
       (send ec set-line-count (+ 1 (send txt last-paragraph)))
+      (send dlg resize 0 0)
       (send txt lock #t)
       (send txt end-edit-sequence)
       (send count set-label (format columns-string (get-max-line-width txt)))
-      (send dark-msg set-bm (if (equal? str "") #f bm))))
+      (send dark-msg set-bm (if (equal? str "") #f bm)))
+    (send dlg end-container-sequence))
   
   
   (let ()
@@ -246,18 +250,21 @@
                             (Instance Bitmap%)))
 (define (render-large-letters comment-prefix comment-character the-font str edit color-insertion?)
   (define bdc (new bitmap-dc% [bitmap (make-bitmap 1 1 #t)]))
-  (define-values (tw raw-th td ta) (send bdc get-text-extent str the-font))
-  (define th (let-values ([(_1 h _2 _3) (send bdc get-text-extent "X" the-font)])
+  (define-values (tw raw-th td ta) (send bdc get-text-extent str the-font 'grapheme))
+  (define th (let-values ([(_1 h _2 _3) (send bdc get-text-extent "X" the-font 'grapheme)])
                (max raw-th h)))
   (define tmp-color (make-object color%))
   
   (: get-char (Real Real -> Char))
   (define (get-char x y)
     (send bdc get-pixel x y tmp-color)
-    (let ([red (send tmp-color red)])
-      (if (= red 0)
-          comment-character
-          #\space)))  
+    (define max-color
+      (max (send tmp-color red)
+           (send tmp-color green)
+           (send tmp-color blue)))
+    (if (<= max-color 80)
+        comment-character
+        #\space))
   (define bitmap
     (make-object bitmap%
       (max 1 (exact-floor tw))
@@ -275,7 +282,7 @@
   (send bdc set-bitmap bitmap)
   (send bdc clear)
   (send bdc set-font the-font)
-  (send bdc draw-text str 0 0)
+  (send bdc draw-text str 0 0 'grapheme)
   
   (send edit begin-edit-sequence)
   (let ([start (send edit get-start-position)]

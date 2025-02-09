@@ -1,23 +1,23 @@
 #lang racket/base
-(require framework
+(require browser/external
+         data/interval-map
+         drracket/private/rectangle-intersect
+         framework
          framework/private/coroutine
-         racket/gui/base
+         framework/private/logging-timer
+         images/icons/misc
+         net/url
          racket/class
-         racket/math
+         racket/gui/base
          racket/match
+         racket/math
          racket/runtime-path
          racket/set
-         data/interval-map
-         images/icons/misc
-         drracket/private/rectangle-intersect
-         string-constants
-         framework/private/logging-timer
          scribble/blueboxes
-         net/url
-         browser/external
-         setup/xref
          scribble/xref
-         setup/collects)
+         setup/collects
+         setup/xref
+         string-constants)
 (provide docs-text-defs-mixin
          docs-text-ints-mixin
          docs-editor-canvas-mixin
@@ -205,7 +205,7 @@
     (define visit-docs-path #f)
     (define visit-docs-tag #f)
     (define/private (visit-docs-url)
-      (when (and visit-docs-path visit-docs-tag)
+      (when visit-docs-path
         (define url (path->url visit-docs-path))
         (define url2 (if visit-docs-tag
                          (make-url (url-scheme url)
@@ -466,7 +466,14 @@
                     (compute-tag+rng maybe-pause sp)))))
       (define done? (coroutine-run update-the-strs-coroutine (void)))
       (cond
-        [done?
+        [(and done? update-the-strs-coroutine)
+         ;; check `update-the-strs-coroutine` because some
+         ;; query to the buffer might have caused a callback
+         ;; to call `trigger-buffer-changed-callback`
+         ;; I'm not sure how this can happen specifically,
+         ;; but we saw the symptom that this `coroutine-value`
+         ;; was getting `#f` as an argument and, if that happens
+         ;; then we want to start over anyway
          (define tag+rng (coroutine-value update-the-strs-coroutine))
          (set! update-the-strs-coroutine #f)
          (when tag+rng
@@ -507,20 +514,26 @@
                (define id-strs
                  (and tag
                       (fetch-blueboxes-strs tag #:blueboxes-cache the-blueboxes-cache)))
-               (and id-strs
-                    (list start
-                          end
-                          (apply
-                           append
-                           id-strs
-                           (for/list ([meth-tag (in-list meth-tags)]
-                                      [i (in-naturals)])
-                             (define bbs
-                               (fetch-blueboxes-strs meth-tag #:blueboxes-cache the-blueboxes-cache))
-                             (if (zero? i)
-                                 (or bbs '())
-                                 (if bbs (cdr bbs) '()))))
-                          path url-tag))])]
+               (cond
+                 [id-strs
+                  (define bbss
+                    (for/list ([meth-tag (in-list meth-tags)])
+                      (fetch-blueboxes-strs meth-tag #:blueboxes-cache the-blueboxes-cache)))
+                  (define first-of-first-bbs
+                    (for/or ([bbs (in-list bbss)])
+                      (and (pair? bbs) (car bbs))))
+                  (define without-first-bbss
+                    (for/list ([bbs (in-list bbss)])
+                      (if bbs (cdr bbs) '())))
+                  (list start
+                        end
+                        (apply append
+                               id-strs
+                               (if first-of-first-bbs (list first-of-first-bbs) '())
+                               without-first-bbss)
+                        path
+                        url-tag)]
+                 [else #f])])]
            [else #f])]
         [#f #f]))
     
@@ -954,9 +967,7 @@
     (when std (send dc set-font (send std get-font)))
     (define label-font (get-label-font sl))
     (define-values (label-w label-h label-d label-a)
-      (send dc get-text-extent (list-ref strs 0) label-font))
-    (define-values (first-line-w first-line-h _1 _2)
-      (send dc get-text-extent (if (null? (cdr strs)) "" (list-ref strs 1))))
+      (send dc get-text-extent (list-ref strs 0) label-font 'grapheme))
     
     (send dc set-text-foreground
           (if (preferences:get 'framework:white-on-black?)
@@ -965,18 +976,19 @@
     (for/fold ([y (if label-overlap? 
                       (+ blue-box-margin (extra-first-line-space dc sl strs))
                       (+ blue-box-margin label-h))])
-      ([str (in-list (cdr strs))])
-      (define-values (w h d a) (send dc get-text-extent str))
-      (send dc draw-text str (+ (- dx+br  box-width) blue-box-margin) (+ dy+bt y))
+              ([str (in-list (cdr strs))])
+      (define-values (w h d a) (send dc get-text-extent str #f 'grapheme))
+      (send dc draw-text str (+ (- dx+br  box-width) blue-box-margin) (+ dy+bt y) 'grapheme)
       (+ y h))
     
     (draw-blue-box-shadow dc (- dx+br box-width) dy+bt box-width box-height)
     
     (send dc set-text-foreground blue-box-label-text-color)
     (send dc set-font label-font)
-    (send dc draw-text (list-ref strs 0) 
+    (send dc draw-text (list-ref strs 0)
           (- dx+br blue-box-margin label-w)
-          (+ dy+bt blue-box-margin))
+          (+ dy+bt blue-box-margin)
+          'grapheme)
     
     (send dc set-text-foreground text-foreground)
     (send dc set-smoothing smoothing)

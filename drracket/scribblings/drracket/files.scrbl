@@ -39,13 +39,53 @@ DrRacket's editor can save a program file in two different formats:
 
 @; ----------------------------------------
 
-@section[#:tag "drracket-autosave-files"]{Backup and Autosave Files}
+@section[#:tag "drracket-autosave-files"]{Backup and First Change Files}
 
-When you modify an existing file in DrRacket and save it, DrRacket
-copies the old version of the file to a special backup file if no
-backup file exists. The backup file is saved in the same directory as
-the original file, and the backup file's name is generated from the
-original file's name:
+Every 30 seconds, DrRacket checks each open file. If any
+file is modified and not saved, DrRacket saves the contents
+of the file in a backup file, just in case there is a power
+failure or some other catastrophic error. If the original
+file is later saved, or if the user exits DrRacket and
+explicitly declines to save the file, the backup file is
+removed. The backup file is saved in the same directory as
+the original file, and the back file's name is generated
+from the original file's name:
+
+@itemize[
+
+ @item{On Unix and Mac OS, a @filepath{#} is added to the
+  start and end of the file's name, then a number is added
+  after the ending @filepath{#}, and then one more
+  @filepath{#} is appended after the number. The number is
+  selected to make the backup filename unique.}
+
+ @item{On Windows, the file's extension is replaced with a
+  number to make the backup filename unique.}
+
+]
+
+@margin-note{In DrRacket's implementation, these files are
+ called ``autosave'' files, not backup files.}
+If the definitions window is modified and there is no
+current file, then a backup file is written to the user's
+``documents'' directory. The ``documents'' directory is
+determined by @racket[(find-system-path 'doc-dir)].
+
+When DrRacket first starts up, it looks to see if there are
+any backup files still present and if so, offers to restore
+the backup files, on the assumption that DrRacket was closed
+unintentionally. When it restores the files, DrRacket moves
+the current version of the original file out of the way
+(adding @index["autorec"]{``autorec''} to the name)
+and the moves the backup file in place of the original file.
+
+Separately, DrRacket creates ``first change'' files. When
+you modify an existing file in DrRacket and save it,
+DrRacket copies the old version of the file to a special
+first-change file if no such file exists. The
+first-change file is saved in the same directory as the
+original file, and the first-change file's name is generated
+from the original file's name:
 
 @itemize[
 
@@ -57,31 +97,6 @@ original file's name:
 
 ]
 
-Every five minutes, DrRacket checks each open file. If any file is
-modified and not saved, DrRacket saves the file to a special autosave
-file (just in case there is a power failure or some other catastrophic
-error). If the file is later saved, or if the user exists DrRacket
-without saving the file, the autosave file is removed. The autosave
-file is saved in the same directory as the original file, and the
-autosave file's name is generated from the original file's name:
-
-@itemize[
-
- @item{On Unix and Mac OS, a @filepath{#} is added to the start
-       and end of the file's name, then a number is added after the
-       ending @filepath{#}, and then one more @filepath{#} is appended
-       after the number. The number is selected to make the autosave
-       filename unique.}
-
- @item{On Windows, the file's extension is replaced with a number
-       to make the autosave filename unique.}
-
-]
-
-If the definitions window is modified and there is no current file,
-then an autosave file is written to the user's ``documents''
-directory. @margin-note{The ``documents'' directory is determined by
-@racket[(find-system-path 'doc-dir)].}
 
 @; ----------------------------------------
 

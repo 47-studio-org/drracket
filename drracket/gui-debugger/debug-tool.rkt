@@ -45,7 +45,7 @@
 (define tool@
   (unit 
     (import drscheme:tool^)
-    (export drscheme:tool-exports^) 
+    (export drscheme:tool-exports^)
 
     (define (phase1)
       (drscheme:module-language-tools:add-opt-out-toolbar-button
@@ -77,9 +77,7 @@
       (and (syntax? stx) (syntax-source stx)))
     
     (define (robust-vector-ref vec idx)
-      (if (< idx (vector-length vec))
-          (vector-ref vec idx)
-          #f))
+      (and (< idx (vector-length vec)) (vector-ref vec idx)))
     
     (define (safe-vector-set! vec idx val)
       (when (< idx (vector-length vec))
@@ -98,38 +96,31 @@
     
     (define (index-of chr str)
       (let loop ([i 0])
-        (if (< i (string-length str))
-            (if (char=? chr (string-ref str i))
-                i
-                (loop (add1 i)))
-            #f)))
+        (and (< i (string-length str))
+             (if (char=? chr (string-ref str i))
+                 i
+                 (loop (add1 i))))))
     
     (define (safe-min . args)
       (apply min (filter identity args)))
-    
+
     ;; trim-expr-str: string -> string
     ;; examples:
     ;; short-id                   => short-id
     ;; really-long-identifier     => really-lon...
     ;; (<form>)                   => (<form>)
     ;; (<form> <arg1> ... <argn>) => (<form> ...)
-    (define trim-expr-str
-      (lambda (str [len 10])
-        (let* ([strlen (string-length str)]
-               [starts-with-paren (and (> strlen 0)
-                                       (char=? (string-ref str 0) #\())]
-               [len2 (+ len 4)]
-               [trunc-pos (safe-min (index-of #\space str)
-                                    (index-of #\newline str)
-                                    (and (> strlen len2) len)
-                                    strlen)])
-          (if (>= trunc-pos strlen)
-              str
-              (string-append
-               (substring str 0 trunc-pos)
-               (if starts-with-paren
-                   " ...)"
-                   " ..."))))))
+    (define (trim-expr-str str [len 10])
+      (let* ([strlen (string-length str)]
+             [starts-with-paren (and (> strlen 0) (char=? (string-ref str 0) #\())]
+             [len2 (+ len 4)]
+             [trunc-pos (safe-min (index-of #\space str)
+                                  (index-of #\newline str)
+                                  (and (> strlen len2) len)
+                                  strlen)])
+        (if (>= trunc-pos strlen)
+            str
+            (string-append (substring str 0 trunc-pos) (if starts-with-paren " ...)" " ...")))))
     
     (define (average . values)
       (/ (apply + values) (length values)))
@@ -144,10 +135,12 @@
               (> (bytes-length v) size))
          (bytes-append (subbytes v 0 size) #"...")]
         [(list? v)
-         (let* ([len (length v)]
-                [res (build-list (min size len)
-                                 (lambda (i) (truncate-value (list-ref v i) size (sub1 depth))))])
-           (if (> len size) (append res (list '...)) res))]
+         (define len (length v))
+         (define res
+           (build-list (min size len) (lambda (i) (truncate-value (list-ref v i) size (sub1 depth)))))
+         (if (> len size)
+             (append res (list '...))
+             res)]
         [(vector? v)
          (build-vector (min size (vector-length v))
                        (lambda (i)
@@ -157,19 +150,19 @@
                              (truncate-value (vector-ref v i) size (sub1 depth)))))]
         [else v]))
     
-    (define filename->defs
-      (lambda (source [default #f])
-        (let/ec k
-          (cond
-            [(is-a? source editor<%>) source]
-            [else
-             (send (group:get-the-frame-group) for-each-frame
-                   (lambda (frame)
-                     (and (is-a? frame drscheme:unit:frame<%>)
-                          (let* ([defss (map (lambda (t) (send t get-defs)) (send frame get-tabs))]
-                                 [defs (findf (lambda (d) (send d port-name-matches? source)) defss)])
-                            (and defs (k defs))))))
-             default]))))
+    (define (filename->defs source [default #f])
+      (let/ec k
+        (cond
+          [(is-a? source editor<%>) source]
+          [else
+           (send (group:get-the-frame-group)
+                 for-each-frame
+                 (lambda (frame)
+                   (and (is-a? frame drscheme:unit:frame<%>)
+                        (let* ([defss (map (lambda (t) (send t get-defs)) (send frame get-tabs))]
+                               [defs (findf (lambda (d) (send d port-name-matches? source)) defss)])
+                          (and defs (k defs))))))
+           default])))
     
     (define (debug-definitions-text-mixin super%)
       (class super%
@@ -198,24 +191,21 @@
         (define/augment (on-delete start len)
           (unless ignore-modification?
             (begin-edit-sequence)
-            (let ([breakpoints (send (get-tab) get-breakpoints)]
-                  [shifts empty])
-              (hash-for-each
-               breakpoints
-               (lambda (pos status)
-                 (cond
-                   ; deletion after breakpoint: no effect
-                   [(<= pos start)]
-                   ; deletion of breakpoint: remove from table
-                   [(and (< start pos)
-                         (<= pos (+ start len)))
-                    (hash-remove! breakpoints pos)]
-                   ; deletion before breakpoint: shift breakpoint
-                   [(> pos (+ start len))
-                    (hash-remove! breakpoints pos)
-                    (set! shifts (cons (cons (- pos len) status) shifts))])))
-              (for-each (lambda (p) (hash-set! breakpoints (car p) (cdr p)))
-                        shifts)))
+            (define breakpoints (send (get-tab) get-breakpoints))
+            (define shifts empty)
+            (hash-for-each
+             breakpoints
+             (lambda (pos status)
+               (cond
+                 ; deletion after breakpoint: no effect
+                 [(<= pos start)]
+                 ; deletion of breakpoint: remove from table
+                 [(and (< start pos) (<= pos (+ start len))) (hash-remove! breakpoints pos)]
+                 ; deletion before breakpoint: shift breakpoint
+                 [(> pos (+ start len))
+                  (hash-remove! breakpoints pos)
+                  (set! shifts (cons (cons (- pos len) status) shifts))])))
+            (for-each (lambda (p) (hash-set! breakpoints (car p) (cdr p))) shifts))
           (inner (void) on-delete start len))
         
         (define/augment (after-delete start len)
@@ -229,19 +219,17 @@
           (inner (void) on-insert start len)
           (unless ignore-modification?
             (begin-edit-sequence)
-            (let ([breakpoints (send (get-tab) get-breakpoints)]
-                  [shifts empty])
-              (hash-for-each
-               breakpoints
-               (lambda (pos status)
-                 (when (< start pos)
-                   ;; text inserted before this breakpoint, so shift
-                   ;; the breakpoint forward by <len> positions
-                   (hash-remove! breakpoints pos)
-                   (set! shifts (cons (cons (+ pos len) status) shifts)))))
-              ;; update the breakpoint locations
-              (for-each (lambda (p) (hash-set! breakpoints (car p) (cdr p)))
-                        shifts))))
+            (define breakpoints (send (get-tab) get-breakpoints))
+            (define shifts empty)
+            (hash-for-each breakpoints
+                           (lambda (pos status)
+                             (when (< start pos)
+                               ;; text inserted before this breakpoint, so shift
+                               ;; the breakpoint forward by <len> positions
+                               (hash-remove! breakpoints pos)
+                               (set! shifts (cons (cons (+ pos len) status) shifts)))))
+            ;; update the breakpoint locations
+            (for-each (lambda (p) (hash-set! breakpoints (car p) (cdr p))) shifts)))
         
         (define/augment (after-insert start len)
           (inner (void) after-insert start len)
@@ -269,30 +257,27 @@
         
         ;; mouse-event -> (or (values #f #f) (values pos editor))
         (define/private (get-pos/text event)
-          (let ([event-x (send event get-x)]
-                [event-y (send event get-y)]
-                [on-it? (box #f)])
-            (let loop ([editor this])
-              (let-values ([(x y) (send editor dc-location-to-editor-location
-                                        event-x event-y)])
-                (cond
-                  [(is-a? editor text%)
-                   (let ([pos (send editor find-position x y #f on-it?)])
-                     (cond
-                       [(not (unbox on-it?)) (values #f #f)]
-                       [else
-                        (let ([snip (send editor find-snip pos 'after-or-none)])
-                          (if (and snip
-                                   (is-a? snip editor-snip%))
-                              (loop (send snip get-editor))
-                              (values pos editor)))]))]
-                  [(is-a? editor pasteboard%)
-                   (let ([snip (send editor find-snip x y)])
-                     (if (and snip
-                              (is-a? snip editor-snip%))
-                         (loop (send snip get-editor))
-                         (values #f #f)))]
-                  [else (values #f #f)])))))
+          (define event-x (send event get-x))
+          (define event-y (send event get-y))
+          (define on-it? (box #f))
+          (let loop ([editor this])
+            (let-values ([(x y) (send editor dc-location-to-editor-location event-x event-y)])
+              (cond
+                [(is-a? editor text%)
+                 (let ([pos (send editor find-position x y #f on-it?)])
+                   (cond
+                     [(not (unbox on-it?)) (values #f #f)]
+                     [else
+                      (let ([snip (send editor find-snip pos 'after-or-none)])
+                        (if (and snip (is-a? snip editor-snip%))
+                            (loop (send snip get-editor))
+                            (values pos editor)))]))]
+                [(is-a? editor pasteboard%)
+                 (define snip (send editor find-snip x y))
+                 (if (and snip (is-a? snip editor-snip%))
+                     (loop (send snip get-editor))
+                     (values #f #f))]
+                [else (values #f #f)]))))
         
         ;; text% start -> (values left top right bottom)
         ;; (four numbers that indicate the locations in pixels of the
@@ -300,28 +285,26 @@
         (define/private (find-char-box text pos)
           (define start-pos (max 0 (- pos 1)))
           (define end-pos (+ start-pos 1))
-          (let ([xlb (box 0)]
-                [ylb (box 0)]
-                [xrb (box 0)]
-                [yrb (box 0)])
-            (send text position-location start-pos xlb ylb #t)
-            (send text position-location end-pos xrb yrb #f)
-            (let*-values ([(xl-off yl-off) (send text editor-location-to-dc-location
-                                                 (unbox xlb) (unbox ylb))]
-                          [(xl yl) (dc-location-to-editor-location xl-off yl-off)]
-                          [(xr-off yr-off) (send text editor-location-to-dc-location
-                                                 (unbox xrb) (unbox yrb))]
-                          [(xr yr) (dc-location-to-editor-location xr-off yr-off)])
-              (cond
-                [(= (send text position-line start-pos)
-                    (send text position-line end-pos))
-                 (values xl yl xr yr)]
-                [else
-                 ;; in this case, the open paren we want to draw on top of is on
-                 ;; a different line from the operator following it, so we just 
-                 ;; give ourselves a little space and draw something, instead of
-                 ;; returning strange results (and possibly crashing)
-                 (values xl yl (+ 10 xl) (+ yl 10))]))))
+          (define xlb (box 0))
+          (define ylb (box 0))
+          (define xrb (box 0))
+          (define yrb (box 0))
+          (send text position-location start-pos xlb ylb #t)
+          (send text position-location end-pos xrb yrb #f)
+          (define-values (xl-off yl-off)
+            (send text editor-location-to-dc-location (unbox xlb) (unbox ylb)))
+          (define-values (xl yl) (dc-location-to-editor-location xl-off yl-off))
+          (define-values (xr-off yr-off)
+            (send text editor-location-to-dc-location (unbox xrb) (unbox yrb)))
+          (define-values (xr yr) (dc-location-to-editor-location xr-off yr-off))
+          (cond
+            [(= (send text position-line start-pos) (send text position-line end-pos))
+             (values xl yl xr yr)]
+            ;; in this case, the open paren we want to draw on top of is on
+            ;; a different line from the operator following it, so we just
+            ;; give ourselves a little space and draw something, instead of
+            ;; returning strange results (and possibly crashing)
+            [else (values xl yl (+ 10 xl) (+ yl 10))]))
         
         (define/private (render v)
           (send (get-tab) render v))
@@ -329,112 +312,126 @@
         ;; mouse-event% integer -> ()
         ;; handles a right-click on a position that's not a breakable paren
         (define/private (debugger-handle-right-click-non-breakable event pos)
-          (let* ([frames (send (get-tab) get-stack-frames)]
-                 [pos-vec (send (get-tab) get-pos-vec)]
-                 [id (robust-vector-ref pos-vec pos)])
-            (unless (lookup-var
-                     id frames
-                     (lambda (val wr)
-                       (let ([id-sym (syntax-e id)]
-                             [menu (make-object popup-menu% #f)])
-                         (make-object menu-item%
-                           (clean-status (format "Print value of ~a to console" id-sym))
-                           menu
-                           (lambda (item evt)
-                             (send (get-tab) print-to-console (format "~a = ~s" id-sym val))))
-                         (make-object menu-item% (format "(set! ~a ...)" id-sym) menu
-                           (lambda (item evt)
-                             (let* ([tmp (get-text-from-user
-                                          (format "New value for ~a" id-sym) #f #f
-                                          (format "~a" val))])
-                               (when tmp
-                                 (let/ec k
-                                   (wr (with-handlers
-                                           ([exn:fail?
-                                             (lambda (exn)
-                                               (message-box
-                                                "Debugger Error"
-                                                (format "The following error occurred: ~a"
-                                                        (exn-message exn)))
-                                               (k))])
-                                         (read (open-input-string tmp)))))))))
-                         (send (get-canvas) popup-menu menu
-                               (+ 1 (inexact->exact (floor (send event get-x))))
-                               (+ 1 (inexact->exact (floor (send event get-y)))))
-                         #t))
-                     (lambda () #f))
-              (super on-event event))))
-        
-        (define/private (debugger-handle-right-click-breakable event breakpoints pos break-status)
-          (let ([menu (make-object popup-menu% #f)])
-            (make-object menu-item%
-              (if break-status
-                  "Remove pause at this point"
-                  "Pause at this point")
-              menu
-              (lambda (item evt)
-                (hash-set! breakpoints pos (not break-status))
-                (invalidate-bitmap-cache)))
-            (let ([pc (send (get-tab) get-pc)])
-              (if (and pc (= pos pc))
-                  (let* ([stat (send (get-tab) get-break-status)]
-                         [f (get-top-level-window)]
-                         [rendered-value
-                          (if (cons? stat)
-                              (if (= 2 (length stat))
-                                  (render (cadr stat))
-                                  (format "~s" (cons 'values 
-                                                     (map (lambda (v) (render v)) (rest stat)))))
-                              "")])
-                    (when (cons? stat)
-                      (make-object menu-item%
-                        "Print return value to console" menu
-                        (lambda _ (send (get-tab) print-to-console
-                                        (string-append "return val = " rendered-value)))))
-                    (when (not (eq? stat 'break))
-                      (make-object menu-item%
-                        (if (cons? stat)
-                            "Change return value..."
-                            "Skip expression...")
+          (define frames (send (get-tab) get-stack-frames))
+          (define pos-vec (send (get-tab) get-pos-vec))
+          (define id (robust-vector-ref pos-vec pos))
+          (unless (lookup-var
+                   id
+                   frames
+                   (lambda (val wr)
+                     (let ([id-sym (syntax-e id)]
+                           [menu (make-object popup-menu% #f)])
+                       (make-object
+                        menu-item%
+                        (clean-status (format "Print value of ~a to console" id-sym))
                         menu
                         (lambda (item evt)
-                          (let ([tmp (get-text-from-user "Return value" #f)])
-                            (when tmp
-                              (let/ec k
-                                (send (get-tab) set-break-status
-                                      (cons 'exit-break
-                                            (call-with-values
-                                             (lambda ()
-                                               (with-handlers
-                                                   ([exn:fail?
-                                                     (lambda (exn)
-                                                       (message-box
-                                                        "Debugger Error"
-                                                        (format "An error occurred: ~a" (exn-message exn))
-                                                        #f '(ok))
-                                                       (k))])
-                                                 (read (open-input-string tmp))))
-                                             list)))
-                                (invalidate-bitmap-cache))))))))
-                  (make-object menu-item%
-                    "Continue to this point"
-                    menu
-                    (lambda (item evt)
-                      (hash-set!
-                       breakpoints pos
-                       (lambda () (hash-set! breakpoints pos break-status) #t))
-                      (invalidate-bitmap-cache)
-                      (when (send (get-tab) get-stack-frames)
-                        (send (get-tab) resume))))))
-            (send (get-canvas) popup-menu menu
-                  (+ 1 (inexact->exact (floor (send event get-x))))
-                  (+ 1 (inexact->exact (floor (send event get-y)))))))
+                          (send (get-tab) print-to-console (format "~a = ~s" id-sym val))))
+                       (make-object
+                        menu-item%
+                        (format "(set! ~a ...)" id-sym)
+                        menu
+                        (lambda (item evt)
+                          (define tmp
+                            (get-text-from-user (format "New value for ~a" id-sym)
+                                                #f
+                                                #f
+                                                (format "~a" val)))
+                          (when tmp
+                            (let/ec k
+                              (wr (with-handlers ([exn:fail?
+                                                   (lambda (exn)
+                                                     (message-box
+                                                      "Debugger Error"
+                                                      (format "The following error occurred: ~a"
+                                                              (exn-message exn)))
+                                                     (k))])
+                                    (read (open-input-string tmp))))))))
+                       (send (get-canvas)
+                             popup-menu
+                             menu
+                             (+ 1 (inexact->exact (floor (send event get-x))))
+                             (+ 1 (inexact->exact (floor (send event get-y)))))
+                       #t))
+                   (lambda () #f))
+            (super on-event event)))
+        
+        (define/private (debugger-handle-right-click-breakable event breakpoints pos break-status)
+          (define menu (make-object popup-menu% #f))
+          (make-object menu-item%
+                       (if break-status "Remove pause at this point" "Pause at this point")
+                       menu
+                       (lambda (item evt)
+                         (hash-set! breakpoints pos (not break-status))
+                         (invalidate-bitmap-cache)))
+          (let ([pc (send (get-tab) get-pc)])
+            (if (and pc (= pos pc))
+                (let* ([stat (send (get-tab) get-break-status)]
+                       [f (get-top-level-window)]
+                       [rendered-value
+                        (if (cons? stat)
+                            (if (= 2 (length stat))
+                                (render (cadr stat))
+                                (format "~s"
+                                        (cons 'values (map (lambda (v) (render v)) (rest stat)))))
+                            "")])
+                  (when (cons? stat)
+                    (make-object menu-item%
+                                 "Print return value to console"
+                                 menu
+                                 (lambda _
+                                   (send (get-tab)
+                                         print-to-console
+                                         (string-append "return val = " rendered-value)))))
+                  (unless (eq? stat 'break)
+                    (make-object
+                     menu-item%
+                     (if (cons? stat) "Change return value..." "Skip expression...")
+                     menu
+                     (lambda (item evt)
+                       (let ([tmp (get-text-from-user "Return value" #f)])
+                         (when tmp
+                           (let/ec k
+                             (send
+                              (get-tab)
+                              set-break-status
+                              (cons 'exit-break
+                                    (call-with-values
+                                     (lambda ()
+                                       (with-handlers ([exn:fail?
+                                                        (lambda (exn)
+                                                          (message-box "Debugger Error"
+                                                                       (format "An error occurred: ~a"
+                                                                               (exn-message exn))
+                                                                       #f
+                                                                       '(ok))
+                                                          (k))])
+                                         (read (open-input-string tmp))))
+                                     list)))
+                             (invalidate-bitmap-cache))))))))
+                (make-object menu-item%
+                             "Continue to this point"
+                             menu
+                             (lambda (item evt)
+                               (hash-set! breakpoints
+                                          pos
+                                          (lambda ()
+                                            (hash-set! breakpoints pos break-status)
+                                            #t))
+                               (invalidate-bitmap-cache)
+                               (when (send (get-tab) get-stack-frames)
+                                 (send (get-tab) resume))))))
+          (send (get-canvas)
+                popup-menu
+                menu
+                (+ 1 (inexact->exact (floor (send event get-x))))
+                (+ 1 (inexact->exact (floor (send event get-y))))))
         
         (define/private (debugger-handle-right-click event breakpoints)
           (let-values ([(pos text) (get-pos/text event)])
             (if (and pos text)
                 (let* ([pos (add1 pos)]
-                       [break-status (hash-ref breakpoints pos (lambda () 'invalid))])
+                       [break-status (hash-ref breakpoints pos 'invalid)])
                   (match break-status
                     [(or #t #f (? procedure?))
                      (debugger-handle-right-click-breakable event breakpoints pos break-status)]
@@ -443,52 +440,50 @@
                 (super on-event event))))
         
         (define/private (debugger-handle-event event)
-          (let ([breakpoints (send (get-tab) get-breakpoints)])
-            (cond
-              [(send event leaving?)
-               (when mouse-over-pos
-                 (set! mouse-over-pos #f)
-                 (invalidate-bitmap-cache))
-               (super on-event event)]
-              [(or (send event moving?)
-                   (send event entering?))
-               (let-values ([(pos text) (get-pos/text event)])
-                 (when (and pos text)
-                   (let ([pos (add1 pos)])
-                     (cond
-                       ;; mouse on breakable pos and hasn't moved significantly
-                       [(eq? pos mouse-over-pos)]
-                       ;; mouse on new breakable pos
-                       [(not (eq? (hash-ref
-                                   breakpoints pos (lambda () 'invalid)) 'invalid))
-                        (set! mouse-over-pos pos)
-                        (invalidate-bitmap-cache)]
-                       ;; moved off breakable pos
-                       [mouse-over-pos
-                        (set! mouse-over-pos #f)
-                        (invalidate-bitmap-cache)])
-                     (let* ([frames (send (get-tab) get-stack-frames)]
-                            [pos-vec (send (get-tab) get-pos-vec)]
-                            [id (robust-vector-ref pos-vec pos)]
-                            ;; Try to look up the identifier and render its value.  If either
-                            ;; of these steps fails, just draw an empty string in the status bar.
-                            [rendered
-                             (lookup-var
-                              id (list-tail frames (send (get-tab) get-frame-num))
-                                          ;; id found
-                                          (lambda (val _)
-                                            (cond
-                                              [(render val) => (lambda (str)
-                                                                 (string-append
-                                                                  (symbol->string (syntax-e id)) " = " str))]
-                                              [else ""]))
-                                          ;; id not found
-                                          (lambda () ""))])
-                       (send (get-tab) set-mouse-over-msg (clean-status rendered))))))
-               (super on-event event)]
-              [(send event button-down? 'right)
-               (debugger-handle-right-click event breakpoints)]
-              [else (super on-event event)])))
+          (define breakpoints (send (get-tab) get-breakpoints))
+          (cond
+            [(send event leaving?)
+             (when mouse-over-pos
+               (set! mouse-over-pos #f)
+               (invalidate-bitmap-cache))
+             (super on-event event)]
+            [(or (send event moving?) (send event entering?))
+             (let-values ([(pos text) (get-pos/text event)])
+               (when (and pos text)
+                 (let ([pos (add1 pos)])
+                   (cond
+                     ;; mouse on breakable pos and hasn't moved significantly
+                     [(eq? pos mouse-over-pos)]
+                     ;; mouse on new breakable pos
+                     [(not (eq? (hash-ref breakpoints pos (lambda () 'invalid)) 'invalid))
+                      (set! mouse-over-pos pos)
+                      (invalidate-bitmap-cache)]
+                     ;; moved off breakable pos
+                     [mouse-over-pos
+                      (set! mouse-over-pos #f)
+                      (invalidate-bitmap-cache)])
+                   (let* ([frames (send (get-tab) get-stack-frames)]
+                          [pos-vec (send (get-tab) get-pos-vec)]
+                          [id (robust-vector-ref pos-vec pos)]
+                          ;; Try to look up the identifier and render its value.  If either
+                          ;; of these steps fails, just draw an empty string in the status bar.
+                          [rendered (lookup-var
+                                     id
+                                     (list-tail frames (send (get-tab) get-frame-num))
+                                     ;; id found
+                                     (lambda (val _)
+                                       (cond
+                                         [(render val)
+                                          =>
+                                          (lambda (str)
+                                            (string-append (symbol->string (syntax-e id)) " = " str))]
+                                         [else ""]))
+                                     ;; id not found
+                                     (lambda () ""))])
+                     (send (get-tab) set-mouse-over-msg (clean-status rendered))))))
+             (super on-event event)]
+            [(send event button-down? 'right) (debugger-handle-right-click event breakpoints)]
+            [else (super on-event event)]))
           
         (define/override (on-event event)
           (if (send (get-tab) debug?)
@@ -504,21 +499,24 @@
                breakpoints
                (lambda (pos enabled?)
                  (when (and (>= pos 0) (or enabled? (and mouse-over-pos (= mouse-over-pos pos))))
-                   (let*-values ([(xl yl xr yr) (find-char-box this pos)]
-                                 [(diameter) (- xr xl)]
-                                 [(yoff) (/ (- yr yl diameter) 2)])
-                     (let ([op (send dc get-pen)]
-                           [ob (send dc get-brush)])
-                       (case enabled?
-                         [(#t) (send dc set-pen bp-pen)
-                               (send dc set-brush bp-brush)]
-                         [(#f) (send dc set-pen bp-mo-pen)
-                               (send dc set-brush bp-mo-brush)]
-                         [else (send dc set-pen bp-tmp-pen)
-                               (send dc set-brush bp-tmp-brush)])
-                       (send dc draw-ellipse (+ xl dx) (+ yl dy yoff) diameter diameter)
-                       (send dc set-pen op)
-                       (send dc set-brush ob)))))))
+                   (define-values (xl yl xr yr) (find-char-box this pos))
+                   (define diameter (- xr xl))
+                   (define yoff (/ (- yr yl diameter) 2))
+                   (define op (send dc get-pen))
+                   (define ob (send dc get-brush))
+                   (case enabled?
+                     [(#t)
+                      (send dc set-pen bp-pen)
+                      (send dc set-brush bp-brush)]
+                     [(#f)
+                      (send dc set-pen bp-mo-pen)
+                      (send dc set-brush bp-mo-brush)]
+                     [else
+                      (send dc set-pen bp-tmp-pen)
+                      (send dc set-brush bp-tmp-brush)])
+                   (send dc draw-ellipse (+ xl dx) (+ yl dy yoff) diameter diameter)
+                   (send dc set-pen op)
+                   (send dc set-brush ob)))))
             ;; mark the boundaries of the current stack frame
             ;; unless we're at the end of the expression and looking at the top frame,
             ;; in which case just mark the current location
@@ -596,7 +594,9 @@
     ;; pen and brush for marking the location following a break
     (define pc-brk-pen (send the-pen-list find-or-create-pen "black" 1 'solid))
     (define pc-brk-brush (send the-brush-list find-or-create-brush "gray" 'solid))
-    
+
+    (define system-eventspace (current-eventspace))
+
     (define (debug-interactions-text-mixin super%)
       (class super%
         
@@ -647,17 +647,18 @@
                                (let ([src (syntax-source orig-exp)])
                                  (and (path? src)
                                       src))))
+               (define annotating-tabs (make-hasheq))
                (cond
                  [(or (eq? (filename->defs (and (syntax? orig-exp)
                                                 (syntax-source orig-exp)))
                            (send (get-tab) get-defs))
-                      (annotate-this-module? fn))
+                      (annotate-this-module? fn annotating-tabs))
                   (parameterize ([current-eval oe])
                    (eval/annotations
                     top-e
                     ; annotate-module?
                     (lambda (fn m) 
-                      (annotate-this-module? fn))
+                      (annotate-this-module? fn annotating-tabs))
                     ; annotator
                     (lambda (stx)
                       (define source (syntax-source stx))
@@ -682,7 +683,7 @@
                              [else (void)]))
                          ; record-top-level-identifier
                          (lambda (mod var rd/wr)
-                           ; filename->defs should succeed unless a slave tab gets closed
+                           ; filename->defs should succeed unless a secondary tab gets closed
                            (cond
                              [(filename->defs (robust-syntax-source var))
                               =>
@@ -703,43 +704,59 @@
                       (for ([posn (in-list break-posns)]) 
                         (hash-set!
                          breakpoints posn
-                         (hash-ref breakpoints posn (lambda () #f))))
+                         (hash-ref breakpoints posn #f)))
                       annotated)))]
                  [else (oe top-e)])])))
         
-        (define/private (annotate-this-module? fn)
-          (cond
-            [(filename->defs fn)
-             =>
-             ; fn is loaded into defs
-             (lambda (defs)
-               (let ([extern-tab (send defs get-tab)]
-                     [this-tab (get-tab)])
-                 (case (if (or (not (send extern-tab debug?))
-                               (eq? this-tab (send extern-tab get-master)))
-                           (message-box
-                            "Debugging Multi-File Program"
-                            (format "Debug ~a?" fn)
-                            #f
-                            '(yes-no))
-                           (message-box
-                            "Debugging Multi-File Program"
-                            (format "~a is already involved in a debugging session." fn)
-                            #f
-                            '(ok)))
-                   [(yes)
-                    ; set tab up with shared data from the master tab
-                    (send extern-tab prepare-execution #t)
-                    (send this-tab add-slave extern-tab)
-                    (call-with-values
-                     (lambda () (send this-tab get-shared-data))
-                     (lambda vals (send extern-tab set-shared-data . vals)))
-                    #t]
-                   [(no ok)
-                    (send extern-tab prepare-execution #f)
-                    #f])))]
-            ; fn is not open, so don't try to debug it
-            [else #f]))
+        (define/private (annotate-this-module? fn annotating-tabs)
+          ;; ==called from user thread==
+          (define result-ch (make-channel))
+          (parameterize ([current-eventspace system-eventspace])
+            (queue-callback
+             (lambda ()
+               ;; ==drscheme eventspace thread==
+               (cond
+                 [(filename->defs fn)
+                  =>
+                  ; fn is loaded into defs
+                  (lambda (defs)
+                    (let ([extern-tab (send defs get-tab)]
+                          [this-tab (get-tab)])
+                      (define frame (send this-tab get-frame))
+                      (hash-ref
+                       annotating-tabs extern-tab
+                       (lambda ()
+                         (define extern-debug?
+                           (eq? 'yes (if (or (not (send extern-tab debug?))
+                                             (eq? this-tab (send extern-tab get-primary)))
+                                         (message-box
+                                          "Debugging Multi-File Program"
+                                          (format "Debug ~a?" fn)
+                                          frame
+                                          '(yes-no))
+                                         (message-box
+                                          "Debugging Multi-File Program"
+                                          (format "~a is already involved in a debugging session." fn)
+                                          frame
+                                          '(ok)))))
+                         (hash-set! annotating-tabs extern-tab extern-debug?)
+                         (cond
+                           [extern-debug?
+                            ;; set tab up with shared data from the primary tab
+                            (send this-tab add-secondary extern-tab)
+                            (send extern-tab prepare-execution #t #f)
+                            (call-with-values
+                             (lambda () (send this-tab get-shared-data))
+                             (lambda vals (send extern-tab set-shared-data . vals)))]
+                           [else
+                            ;; leave `extern-tab` alone, unless it was previously
+                            ;; tied to this tab:
+                            (when (eq? this-tab (send extern-tab get-primary))
+                              (send extern-tab prepare-execution #f #f))])
+                         (channel-put result-ch extern-debug?)))))]
+                 ; fn is not open, so don't try to debug it
+                 [else (channel-put result-ch #f)]))))
+          (channel-get result-ch))
         
         (define/override (reset-console)
           (super reset-console)
@@ -817,8 +834,8 @@
                [in-user-ch (make-channel)]
                [want-suspend-on-break? #f]
                [want-debug? #f]
-               [master this]
-               [slaves empty]
+               [primary this]
+               [secondaries empty]
                [closed? (box #f)]
                [stack-frames (box #f)]
                [frame-num (box 0)]
@@ -830,9 +847,9 @@
                [control-panel #f])
         
         (define/public (debug?) want-debug?)
-        (define/public (get-master) master)
-        (define/public (add-slave s)
-          (set! slaves (cons s slaves)))
+        (define/public (get-primary) primary)
+        (define/public (add-secondary s)
+          (set! secondaries (cons s secondaries)))
         (define/public (get-closed-box) closed?)
         (define/public suspend-on-break?
           (case-lambda
@@ -845,7 +862,7 @@
         (define/public (get-break-status) (unbox break-status))
         (define/public (get-frame-num) (unbox frame-num))
         
-        (define/public (set-shared-data bs sf sema res-ch usr-ch step? frame m)
+        (define/public (set-shared-data bs sf sema res-ch usr-ch step? frame p)
           (set! break-status bs)
           (set! stack-frames sf)
           (set! suspend-sema sema)
@@ -853,10 +870,10 @@
           (set! in-user-ch usr-ch)
           (set! single-step? step?)
           (set! frame-num frame)
-          (set! master m))
+          (set! primary p))
         
         (define/public (get-shared-data)
-          (values break-status stack-frames suspend-sema resume-ch in-user-ch single-step? frame-num master))
+          (values break-status stack-frames suspend-sema resume-ch in-user-ch single-step? frame-num primary))
         
         (define/public (get-single-step-box) single-step?)
         (define/public (set-single-step?! v) (set-box! single-step? v))
@@ -1017,7 +1034,7 @@
                     (if (and (cons? status) top-of-stack?)
                         (let ([expr (mark-source (first frames))])
                           (cond
-                            ; should succeed unless the user closes a slave tab during debugging
+                            ; should succeed unless the user closes a secondary tab during debugging
                             [(filename->defs (syntax-source expr))
                              => (lambda (defs)
                                   (clean-status
@@ -1094,14 +1111,15 @@
               [(pair? status) (cdr status)]
               [else #f])))
         
-        (define/public (prepare-execution debug?)
+        (define/public (prepare-execution debug? [to-front? #t])
           (set! want-debug? debug?)
           (cond
             [debug? (send (get-frame) show-debug)]
-            [else (send (get-frame) hide-debug)
-                  (set! master this)
-                  (for-each (lambda (t) (send t prepare-execution #f)) slaves)
-                  (set! slaves empty)])
+            [else (when to-front?
+                    (send (get-frame) hide-debug))
+                  (set! primary this)
+                  (for-each (lambda (t) (send t prepare-execution #f #f)) secondaries)
+                  (set! secondaries empty)])
           (set! current-language-settings (and debug? (send (get-defs) get-next-settings)))
           (set! single-step? (box #t))
           (set! pos-vec (make-vector (add1 (send (get-defs) last-position)) #f))
@@ -1112,12 +1130,13 @@
           (set! break-status (box #f))
           (set! want-suspend-on-break? #f)
           (set! stack-frames (box #f))
-          (send (get-ints) set-tab this))
+          (when to-front?
+            (send (get-ints) set-tab this)))
         
         (define/augment (on-close)
           (inner (void) on-close)
           (set-box! closed? #t)
-          (for-each (lambda (t) (send t prepare-execution #f)) slaves))
+          (for-each (lambda (t) (send t prepare-execution #f #f)) secondaries))
         
         (define/public (hide-debug)
           (send (get-frame) hide-debug))
@@ -1159,13 +1178,13 @@
         (define control-panel #f)
         (define debug? #f)
         (define/public (set-mouse-over-msg msg)
-          (when (not (string=? msg (send mouse-over-message get-label)))
+          (unless (string=? msg (send mouse-over-message get-label))
             (send mouse-over-message set-label msg)))
         
         (define/public (debug-callback)
           (let ([tab (get-current-tab)])
             (cond
-              [(eq? tab (send tab get-master))
+              [(eq? tab (send tab get-primary))
                (set! debug? #t)
                (execute-callback)
                (set! debug? #f)]
@@ -1175,7 +1194,7 @@
         (define/override (execute-callback)
           (let ([tab (get-current-tab)])
             (cond
-              [(eq? tab (send tab get-master))
+              [(eq? tab (send tab get-primary))
                (send (get-current-tab) prepare-execution debug?)
                (super execute-callback)]
               [else
@@ -1185,7 +1204,7 @@
           (message-box
            "Debugger"
            (format "This file is involved in a debugging session.  To run/debug this file, finish the session for ~a and close or re-run it."
-                   (send (send (send tab get-master) get-defs) get-filename/untitled-name))
+                   (send (send (send tab get-primary) get-defs) get-filename/untitled-name))
            this '(ok)))
         
         (define expr-positions empty)
@@ -1216,7 +1235,7 @@
                   (map (lambda (frame)
                          (let ([expr (mark-source frame)])
                            (cond
-                             ; should succeed unless the user closes a slave tab during debugging
+                             ; should succeed unless the user closes a secondary tab during debugging
                              [(and expr (filename->defs (syntax-source expr)))
                               => (lambda (defs)
                                    (trim-expr-str
@@ -1546,11 +1565,13 @@
                                 (not (is-a? lang drscheme:module-language:module-language<%>)) ;; the opt-out button handles this language
                                 (not (debugger-does-not-work-for?
                                       (extract-language-level settings))))])
+            (define debug-parent (send debug-button get-parent))
+            (define debug-button-currently-visible? (member debug-button (send debug-parent get-children)))
             (if visible?
-                (unless (send debug-button is-shown?)
-                  (send (send debug-button get-parent) add-child debug-button))
-                (when (send debug-button is-shown?)
-                  (send (send debug-button get-parent) delete-child debug-button)))))
+                (unless debug-button-currently-visible?
+                  (send debug-parent add-child debug-button))
+                (when debug-button-currently-visible?
+                  (send debug-parent delete-child debug-button)))))
         
         (send (get-button-panel) change-children
               (lambda (children)

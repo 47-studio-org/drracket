@@ -53,7 +53,7 @@ the settings above should match r5rs
     
     (check-top-of-repl)
 
-    (generic-output #t #t #t #t #t)
+    (generic-output #t #t #t #t #t #t)
     
     (test-setting
      (lambda () (fw:test:set-check-box! "Enforce constant definitions (enables some inlining)" #f))
@@ -216,7 +216,7 @@ the settings above should match r5rs
     (check-top-of-repl)
     
     (generic-settings #f)
-    (generic-output #t #f #t #t #f)
+    (generic-output #t #f #t #t #f #f)
     
     (test-hash-bang)
     (test-error-after-definition)
@@ -334,7 +334,7 @@ the settings above should match r5rs
     (check-top-of-repl)
     
     (generic-settings #f)
-    (generic-output #t #f #t #f #f)
+    (generic-output #t #f #t #f #f #f)
     
     (test-hash-bang)
     (test-error-after-definition)
@@ -469,7 +469,7 @@ the settings above should match r5rs
   (parameterize ([language (list #rx"Beginning Student(;|$)")])
     (check-top-of-repl)
     (generic-settings #t)
-    (generic-output #f #f #f #f #f)
+    (generic-output #f #f #f #f #f #f)
     (teaching-language-fraction-output)
     
     (test-hash-bang)
@@ -505,8 +505,26 @@ the settings above should match r5rs
     
     (test-expression "(error 'a \"~a\" 1)" "a: ~a1")
     (test-expression "(error \"a\" \"a\")" "aa")
+
+    (test-expression "(check-expect 1 1)"
+                     "The test passed!"
+                     "Both tests passed!")
+    (test-expression "(check-expect 1 1)\n(check-expect 2 2)\n(+ \"hello\" \"world\")\n(check-expect 3 3)\n"
+                     (λ (got)
+                       (define m (regexp-match #rx"(.*)0 tests passed(.*)" got))
+                       (cond
+                         [m
+                          (define before (list-ref m 1))
+                          (define after (list-ref m 2))
+                          (and (not (regexp-match? #rx"tests? passed" before))
+                               (not (regexp-match? #rx"tests? passed" after)))]
+                         [else #f]))
+                     (λ (got) #t)) ;; just skip the interactions test
+    (test-expression "(define (badfn x) (error \"hello\"))\n(check-expect (badfn 1) 1)\n(error \"hello\")"
+                     #rx"0 tests passed[.].*hello"
+                     (λ (got) #t))
     
-    (test-undefined-fn "(time 1)" "time"))
+    (test-undefined-fn "(time 1)" "time")
     
     (test-expression "true" 
                      "#true"
@@ -606,7 +624,7 @@ the settings above should match r5rs
     
     (test-expression "(require racket/gui/base)(require racket/class)(make-object bitmap% 1 1)"
                      "{image}"
-                     "{image}"))
+                     "{image}")))
 
 (define (bsl)
   (parameterize ([language '(module "htdp/bsl")]
@@ -841,7 +859,7 @@ the settings above should match r5rs
     (check-top-of-repl)
     
     (generic-settings #t)
-    (generic-output #t #f #f #f #f)
+    (generic-output #t #f #f #f #f #f)
     (teaching-language-fraction-output)
     
     (test-hash-bang)
@@ -880,7 +898,25 @@ the settings above should match r5rs
     (test-expression "(error 'a \"~a\" 1)" "a: ~a1")
     (test-expression "(error \"a\" \"a\")" "aa")
     
-    (test-undefined-fn "(time 1)" "time")
+    (test-expression "(check-expect 1 1)"
+                     "The test passed!"
+                     "Both tests passed!")
+    (test-expression "(check-expect 1 1)\n(check-expect 2 2)\n(+ \"hello\" \"world\")\n(check-expect 3 3)\n"
+                     (λ (got)
+                       (define m (regexp-match #rx"(.*)0 tests passed(.*)" got))
+                       (cond
+                         [m
+                          (define before (list-ref m 1))
+                          (define after (list-ref m 2))
+                          (and (not (regexp-match? #rx"tests? passed" before))
+                               (not (regexp-match? #rx"tests? passed" after)))]
+                         [else #f]))
+                     (λ (got) #t)) ;; just skip the interactions test
+    (test-expression "(define (badfn x) (error \"hello\"))\n(check-expect (badfn 1) 1)\n(error \"hello\")"
+                     #rx"0 tests passed[.].*hello"
+                     (λ (got) #t))
+
+(test-undefined-fn "(time 1)" "time")
     
     (test-expression "true" 
                      "#true"
@@ -1001,7 +1037,7 @@ the settings above should match r5rs
     (check-top-of-repl)
     
     (generic-settings #t)
-    (generic-output #t #f #f #f #f)
+    (generic-output #t #f #f #f #f #f)
     (teaching-language-fraction-output)
     
     (test-hash-bang)
@@ -1038,6 +1074,24 @@ the settings above should match r5rs
     
     (test-expression "(error 'a \"~a\" 1)" "a: ~a1")
     (test-expression "(error \"a\" \"a\")" "aa")
+
+    (test-expression "(check-expect 1 1)"
+                     "The test passed!"
+                     "Both tests passed!")
+    (test-expression "(check-expect 1 1)\n(check-expect 2 2)\n(+ \"hello\" \"world\")\n(check-expect 3 3)\n"
+                     (λ (got)
+                       (define m (regexp-match #rx"(.*)0 tests passed(.*)" got))
+                       (cond
+                         [m
+                          (define before (list-ref m 1))
+                          (define after (list-ref m 2))
+                          (and (not (regexp-match? #rx"tests? passed" before))
+                               (not (regexp-match? #rx"tests? passed" after)))]
+                         [else #f]))
+                     (λ (got) #t)) ;; just skip the interactions test
+    (test-expression "(define (badfn x) (error \"hello\"))\n(check-expect (badfn 1) 1)\n(error \"hello\")"
+                     #rx"0 tests passed[.].*hello"
+                     (λ (got) #t))
     
     (test-expression "(time 1)" 
                      #rx"cpu time: [0-9]+ real time: [0-9]+ gc time: [0-9]+\n1")
@@ -1156,7 +1210,7 @@ the settings above should match r5rs
     (check-top-of-repl)
     
     (generic-settings #t)
-    (generic-output #t #f #f #f #f)
+    (generic-output #t #f #f #f #f #f)
     (teaching-language-fraction-output)
     
     (test-hash-bang)
@@ -1193,6 +1247,24 @@ the settings above should match r5rs
     (test-expression "(error 'a \"~a\" 1)" "a: ~a1")
     (test-expression "(error \"a\" \"a\")" "aa")
     
+    (test-expression "(check-expect 1 1)"
+                     "The test passed!"
+                     "Both tests passed!")
+    (test-expression "(check-expect 1 1)\n(check-expect 2 2)\n(+ \"hello\" \"world\")\n(check-expect 3 3)\n"
+                     (λ (got)
+                       (define m (regexp-match #rx"(.*)0 tests passed(.*)" got))
+                       (cond
+                         [m
+                          (define before (list-ref m 1))
+                          (define after (list-ref m 2))
+                          (and (not (regexp-match? #rx"tests? passed" before))
+                               (not (regexp-match? #rx"tests? passed" after)))]
+                         [else #f]))
+                     (λ (got) #t)) ;; just skip the interactions test
+    (test-expression "(define (badfn x) (error \"hello\"))\n(check-expect (badfn 1) 1)\n(error \"hello\")"
+                     #rx"0 tests passed[.].*hello"
+                     (λ (got) #t))
+
     (test-expression "(time 1)" 
                      #rx"cpu time: [0-9]+ real time: [0-9]+ gc time: [0-9]+\n1")
     
@@ -1254,8 +1326,8 @@ the settings above should match r5rs
     (test-undefined-fn "(print (floor (sqrt 2)))" "print")
     
     (test-expression "(let ([f (lambda (x) x)]) f)" 
-                     "(lambda (a1) ...)"
-                     "(lambda (a1) ...)")
+                     "f"
+                     "f")
     (test-expression ",1"
                        "unquote: misuse of a comma or unquote, not under a quasiquoting backquote")
     
@@ -1306,7 +1378,7 @@ the settings above should match r5rs
     (check-top-of-repl)
     
     (generic-settings #t)
-    (generic-output #t #f #t #t #f)
+    (generic-output #t #f #t #t #f #f)
     (teaching-language-fraction-output)
     
     (test-hash-bang)
@@ -1344,6 +1416,24 @@ the settings above should match r5rs
     (test-expression "(error 'a \"~a\" 1)" "a: ~a1")
     (test-expression "(error \"a\" \"a\")" "aa")
     
+    (test-expression "(check-expect 1 1)"
+                     "The test passed!"
+                     "Both tests passed!")
+    (test-expression "(check-expect 1 1)\n(check-expect 2 2)\n(+ \"hello\" \"world\")\n(check-expect 3 3)\n"
+                     (λ (got)
+                       (define m (regexp-match #rx"(.*)0 tests passed(.*)" got))
+                       (cond
+                         [m
+                          (define before (list-ref m 1))
+                          (define after (list-ref m 2))
+                          (and (not (regexp-match? #rx"tests? passed" before))
+                               (not (regexp-match? #rx"tests? passed" after)))]
+                         [else #f]))
+                     (λ (got) #t)) ;; just skip the interactions test
+    (test-expression "(define (badfn x) (error \"hello\"))\n(check-expect (badfn 1) 1)\n(error \"hello\")"
+                     #rx"0 tests passed[.].*hello"
+                     (λ (got) #t))
+
     (test-expression "(time 1)" 
                      #rx"cpu time: [0-9]+ real time: [0-9]+ gc time: [0-9]+\n1")
     
@@ -1413,8 +1503,8 @@ the settings above should match r5rs
     (test-expression "(print (floor (sqrt 2)))" "#i1.0")
     
     (test-expression "(let ([f (lambda (x) x)]) f)" 
-                     "(lambda (a1) ...)"
-                     "(lambda (a1) ...)")
+                     "f"
+                     "f")
     (test-expression ",1"
                      "unquote: misuse of a comma or unquote, not under a quasiquoting backquote")
     
@@ -1535,7 +1625,7 @@ the settings above should match r5rs
     (eprintf "expected lines: \n  ~a\n  ~a\ngot lines:\n  ~a\n  ~a\n" 
              line0-expect line1-expect
              line0-got line1-got)
-    (eprintf "defs: ~s"
+    (eprintf "defs: ~s\n"
              (queue-callback/res (λ () (send (send drs get-definitions-text) get-text))))
     (error 'language-test.rkt "failed get top of repl test")))
 
@@ -1583,7 +1673,7 @@ the settings above should match r5rs
    "(eq? 'g 'G)" 
    (if false/true? "#true" "#t")))
 
-(define (generic-output list? uses-qq-for-plain-print? quasi-quote? has-sharing? has-print-printing?)
+(define (generic-output list? uses-qq-for-plain-print? quasi-quote? has-sharing? has-print-printing? print-value-columns?)
   (define plain-print-style (if has-print-printing? "print" "write"))
   (define drr (wait-for-drracket-frame))
   (define expression "(define x (list 2))\n(list x x)")
@@ -1671,7 +1761,28 @@ the settings above should match r5rs
     (insert-in-definitions drr (defs-prefix))
     (insert-in-definitions drr "(print 'hello (current-output-port) 1)")
     (test plain-print-style #f #t "hello")
-    (test plain-print-style #f #f "hello")))
+    (test plain-print-style #f #f "hello"))
+
+  (when print-value-columns?
+    (set-output-choice plain-print-style #f #t)
+    (let ()
+      (clear-definitions drr)
+      (insert-in-definitions drr (defs-prefix))
+      (insert-in-definitions drr "(build-list 100 values)")
+      (do-execute drr)
+      (define got (fetch-output/should-be-tested drr))
+      (unless (member #\newline (string->list got))
+        (eprintf "long output should have contained newlines, got ~s\n" got)))
+    
+    (let ()
+      (clear-definitions drr)
+      (insert-in-definitions drr (defs-prefix))
+      (insert-in-definitions drr "(print-value-columns 1000)")
+      (insert-in-definitions drr "(build-list 100 values)")
+      (do-execute drr)
+      (define got (fetch-output/should-be-tested drr))
+      (when (member #\newline (string->list got))
+        (eprintf "long output should not have contained newlines, got ~s\n" got)))))
 
 (define (find-output-radio-box label)
   (define frame (test:get-active-top-level-window))

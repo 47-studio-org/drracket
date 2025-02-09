@@ -18,39 +18,39 @@ If the namespace does not, they are colored the unbound color.
 
 (module+ test (require rackunit))
 
-(require string-constants
-         racket/unit
-         racket/match
-         racket/contract
-         racket/class
-         racket/dict
-         racket/set
-         racket/runtime-path
-         racket/place
+(require (for-syntax racket/base)
+         browser/external
          data/interval-map
+         drracket/private/syncheck/annotate
+         drracket/private/syncheck/colors
+         drracket/private/syncheck/syncheck-intf
+         drracket/private/syncheck/traversals
          drracket/tool
-         syntax/toplevel
+         framework
+         framework/private/logging-timer
+         framework/private/srcloc-panel
+         mred
          mrlib/switchable-button
+         net/url
+         racket/class
+         racket/contract
+         racket/dict
+         racket/match
+         racket/place
+         racket/runtime-path
+         racket/set
+         racket/unit
+         string-constants
+         syntax/toplevel
          (prefix-in drracket:arrow: drracket/arrow)
          (prefix-in fw: framework/framework)
-         mred
-         framework
-         framework/private/srcloc-panel
-         net/url
-         browser/external
-         (for-syntax racket/base)
          (only-in ffi/unsafe register-finalizer)
-         "../../syncheck-drracket-button.rkt"
          "../../private/eval-helpers-and-pref-init.rkt"
-         "intf.rkt"
-         "local-member-names.rkt"
+         "../../syncheck-drracket-button.rkt"
          "../tooltip.rkt"
          "blueboxes-gui.rkt"
-         drracket/private/syncheck/syncheck-intf
-         drracket/private/syncheck/colors
-         drracket/private/syncheck/traversals
-         drracket/private/syncheck/annotate
-         framework/private/logging-timer)
+         "intf.rkt"
+         "local-member-names.rkt")
 (provide tool@)
 
 (define orig-output-port (current-output-port))
@@ -262,7 +262,7 @@ If the namespace does not, they are colored the unbound color.
     ;; name-dup? : symbol? -> boolean?
     (define-struct identifier-location-set (set name-dup?) #:transparent)
         
-    ;; color : (or/c (is-a?/c color%) string)
+    ;; color : (or/c (is-a?/c color%) string? color-prefs:color-scheme-color-name?)
     ;; text: text:basic<%>
     ;; start, fin: number
     ;; used to represent regions to highlight when passing the mouse over the syncheck window
@@ -271,6 +271,8 @@ If the namespace does not, they are colored the unbound color.
     ;; id : symbol  --  the nominal-source-id from identifier-binding
     ;; filename : path
     (define-struct def-link (id filename submods) #:transparent)
+
+    (struct unused-binder (text pos-left pos-right) #:transparent)
 
     (define-struct prefixable-reference (id-text id-start id-end))
     
@@ -283,7 +285,6 @@ If the namespace does not, they are colored the unbound color.
             (color-prefs:lookup-in-color-scheme 'drracket:syncheck:var-arrow)
             1 'solid))
     
-    (define templ-color (send the-color-database find-color "purple"))
     (define (get-templ-pen)
       (send the-pen-list find-or-create-pen
             (color-prefs:lookup-in-color-scheme 'drracket:syncheck:template-arrow)
@@ -381,13 +382,12 @@ If the namespace does not, they are colored the unbound color.
           
           (define/private (clean-up)
             (when do-cleanup
-              (let ([st (find-syncheck-text this)])
-                (when (and st
-                           (is-a? st drracket:unit:definitions-text<%>))
-                  (let ([tab (send st get-tab)])
-                    (send (send tab get-frame) set-syncheck-running-mode #f)
-                    (send tab syncheck:clear-error-message)
-                    (send tab syncheck:clear-highlighting))))))
+              (define st (find-syncheck-text this))
+              (when (and st (is-a? st drracket:unit:definitions-text<%>))
+                (define tab (send st get-tab))
+                (send (send tab get-frame) set-syncheck-running-mode #f)
+                (send tab syncheck:clear-error-message)
+                (send tab syncheck:clear-highlighting))))
           
           (super-new)))
       
@@ -456,8 +456,7 @@ If the namespace does not, they are colored the unbound color.
             ;; definition-targets : hash-table[(list symbol[id-name] (listof symbol[submodname])) 
             ;;                                 -o> (list text number number)]
             (define definition-targets (make-hash))
-            
-            
+
             ;; bindings-table : hash-table[(list text number number)
             ;;                             -o> (setof (list text number number))]
             ;; this is a private field
@@ -733,6 +732,11 @@ If the namespace does not, they are colored the unbound color.
                        (λ (x y)
                          (visit-docs-url))]))))
             
+            (define/public (syncheck:add-definition-target/phase-level+space source start-pos end-pos id mods phase-level)
+              (syncheck:add-definition-target source start-pos end-pos id mods))
+            (define/public (syncheck:unused-binder source start-pos end-pos)
+              (when arrow-records
+                (add-to-range/key source start-pos end-pos (unused-binder source start-pos end-pos) #f #f)))
             (define/public (syncheck:add-definition-target source start-pos end-pos id mods)
               (hash-set! definition-targets (list id mods) (list source start-pos end-pos)))
             ;; syncheck:find-definition-target 
@@ -750,8 +754,7 @@ If the namespace does not, they are colored the unbound color.
               (define-values (binding-identifiers make-identifiers-hash)
                 (position->matching-identifiers-hash text 
                                                      (send text get-start-position) 
-                                                     (send text get-end-position)
-                                                     #t))
+                                                     (send text get-end-position)))
               (unless (null? binding-identifiers)
                 (define-values (name-to-offer description-of-name)
                   (find-name-to-offer binding-identifiers
@@ -885,7 +888,9 @@ If the namespace does not, they are colored the unbound color.
                                                   binding-identifiers parent)
               (define (name-dup? x) 
                 (for/or ([var-arrow (in-list binding-identifiers)])
-                  ((var-arrow-name-dup? var-arrow) x)))
+                  (cond
+                    [(unused-binder? var-arrow) #f]
+                    [else ((var-arrow-name-dup? var-arrow) x)])))
               (define new-str
                 (fw:keymap:call/text-keymap-initializer
                  (λ ()
@@ -914,7 +919,6 @@ If the namespace does not, they are colored the unbound color.
                         '(stop default=2)
                         #:dialog-mixin frame:focus-table-mixin)
                        1)))
-                
                 (when do-renaming?
                   (for-each-variable-in-order
                    make-identifiers-hash
@@ -983,14 +987,25 @@ If the namespace does not, they are colored the unbound color.
                     ;; matches the special case in `position-range->binding-arrows`
                     (and (= start-sel end-sel) (not (zero? start-sel))
                          (<= (max a (- start-sel 1)) (min b* (- start-sel 1))))))
+
+              ;; -> (listof (list/c text position position))
+              (define (arrow->range-candidates arrow)
+                (cond
+                  [(unused-binder? arrow)
+                   (list (list (unused-binder-text arrow)
+                               (unused-binder-pos-left arrow)
+                               (unused-binder-pos-right arrow)))]
+                  [else
+                   (list (list (var-arrow-start-text arrow)
+                               (var-arrow-start-pos-left arrow)
+                               (var-arrow-start-pos-right arrow))
+                         (list (var-arrow-end-text arrow)
+                               (var-arrow-end-pos-left arrow)
+                               (var-arrow-end-pos-right arrow)))]))
+
               (define id-set
                 (for*/set ([arrow (in-list binding-var-arrows)]
-                           [id (in-list (list (list (var-arrow-start-text arrow)
-                                                    (var-arrow-start-pos-left arrow)
-                                                    (var-arrow-start-pos-right arrow))
-                                              (list (var-arrow-end-text arrow)
-                                                    (var-arrow-end-pos-left arrow)
-                                                    (var-arrow-end-pos-right arrow))))]
+                           [id (in-list (arrow->range-candidates arrow))]
                            #:when (apply intersect? id))
                   (send (list-ref id 0) get-text (list-ref id 1) (list-ref id 2))))
               (define ids (sort (set->list id-set) string<?))
@@ -1042,8 +1057,7 @@ If the namespace does not, they are colored the unbound color.
                 (when (is-a? text text:basic<%>)
                   (when (hash-has-key? cs-check-syntax-background-colors text-type)
                     (define color
-                      (color-prefs:lookup-in-color-scheme
-                       (hash-ref cs-check-syntax-background-colors text-type)))
+                      (hash-ref cs-check-syntax-background-colors text-type))
                     (add-to-range/key text start fin
                                       (make-colored-region color text start fin)
                                       #f #f)))))
@@ -1107,6 +1121,8 @@ If the namespace does not, they are colored the unbound color.
             (define/public (syncheck:add-jump-to-definition text start end id filename submods)
               (when arrow-records
                 (add-to-range/key text start end (make-def-link id filename submods) #f #f)))
+            (define/public (syncheck:add-jump-to-definition/phase-level+space text start end id filename submods phase-level)
+              (syncheck:add-jump-to-definition text start end id filename submods))
 
             (define/public (syncheck:add-prefixed-require-reference req-text
                                                                     req-pos-left
@@ -1253,7 +1269,8 @@ If the namespace does not, they are colored the unbound color.
                               'default
                               'normal
                               'bold))
-                  (send dc set-text-foreground templ-color)
+                  (send dc set-text-foreground
+                        (color-prefs:lookup-in-color-scheme 'drracket:syncheck:template-arrow))
                   (send dc set-alpha 0.5)
                   (for ([(arrow v) (in-hash tacked-hash-table)])
                     (when v 
@@ -1474,6 +1491,7 @@ If the namespace does not, they are colored the unbound color.
                   (define arrows (filter arrow? vec-ents))
                   (define def-links (filter def-link? vec-ents))
                   (define var-arrows (filter var-arrow? arrows))
+                  (define unused-binders (filter unused-binder? arrows))
                   (define add-menus (append (map cdr (filter pair? vec-ents))
                                             (filter procedure? vec-ents)))
                   (unless (null? arrows)
@@ -1493,7 +1511,7 @@ If the namespace does not, they are colored the unbound color.
                            [callback
                             (λ (item evt)
                               (jump-to-definition-callback def-link))])))
-                  (unless (null? var-arrows)
+                  (unless (and (null? var-arrows) (null? unused-binders))
                     (add-sep)
                     (make-object menu-item%
                       jump-to-next-bound-occurrence
@@ -1534,7 +1552,7 @@ If the namespace does not, they are colored the unbound color.
                     (f menu))
                   
                   (define-values (binding-identifiers make-identifiers-hash)
-                    (position->matching-identifiers-hash text pos pos #t))
+                    (position->matching-identifiers-hash text pos pos))
                   (unless (null? binding-identifiers)
                     (define-values (name-to-offer description-of-name)
                       (find-name-to-offer binding-identifiers pos pos))
@@ -1561,7 +1579,9 @@ If the namespace does not, they are colored the unbound color.
             
             (define tooltip-frame #f)
             (define/private (update-tooltip-frame)
-              (unless tooltip-frame (set! tooltip-frame (new tooltip-frame%)))
+              (define canvas (get-canvas))
+              (define frame (and canvas (send canvas get-top-level-window)))
+              (unless tooltip-frame (set! tooltip-frame (new tooltip-frame% [frame-to-track frame])))
               (match cursor-tooltip
                 [(tooltip-spec strings x y w h)
                  ;; hiding keeps it from flashing the new tooltip in the old location
@@ -1575,9 +1595,8 @@ If the namespace does not, they are colored the unbound color.
             (define current-matching-identifiers (make-hash))
             
             (define/private (update-matching-identifiers refreshing?)
-              (define clr (color-prefs:lookup-in-color-scheme
-                           (hash-ref cs-check-syntax-background-colors
-                                     'matching-identifiers)))
+              (define clr (hash-ref cs-check-syntax-background-colors
+                                    'matching-identifiers))
               (define style 'ellipse) 
               (define in-edit-sequence '())
               (define (un/highlight highlight?)
@@ -1592,16 +1611,21 @@ If the namespace does not, they are colored the unbound color.
                   (unless (= start end)
                     (if highlight?
                         (send txt highlight-range start end clr #f 'low style)
-                        (send txt unhighlight-range start end clr #f style)))))
+                        (send txt unhighlight-ranges
+                              (λ (r-start r-end r-color r-caret-space? r-style r-adjust-on-insert/delete? r-key)
+                                (and (equal? start r-start)
+                                     (equal? end r-end)
+                                     (equal? #f r-caret-space?)
+                                     (equal? style r-style))))))))
               
               (un/highlight #f)
               
               (set! current-matching-identifiers
                     (cond
                       [(and cursor-text cursor-pos)
-                       (define-values (binders make-identifiers-hash)
+                       (define-values (_binders make-identifiers-hash)
                          (position->matching-identifiers-hash cursor-text cursor-pos cursor-pos
-                                                              #f))
+                                                              #:also-look-backward-one? #f))
                        (make-identifiers-hash)]
                       [else
                        (make-hash)]))
@@ -1614,59 +1638,79 @@ If the namespace does not, they are colored the unbound color.
             ;; position->matching-identifiers-hash 
             ;; : txt pos pos -> (values (listof var-arrow?) hash[(list txt pos pos) -o> #t])
             (define/private (position->matching-identifiers-hash the-text the-start-pos the-end-pos
-                                                                 include-require-arrows?)
-              (define binding-arrows (position-range->binding-arrows the-text the-start-pos the-end-pos
-                                                               include-require-arrows?))
-              (values binding-arrows
-                      (binding-arrows->identifiers-hash include-require-arrows? binding-arrows)))
+                                                                 #:also-look-backward-one? [also-look-backward-one? #t])
+              (define binding-arrows (position-range->binding-arrows the-text the-start-pos the-end-pos #f
+                                                                     #:include-unused-binders? #t
+                                                                     #:also-look-backward-one? also-look-backward-one?))
 
+              (values binding-arrows
+                      (binding-arrows->identifiers-hash #f binding-arrows)))
+
+            ;; the also-look-backward-one? argument is intended for when the originating
+            ;; position is an insertion point coming, perhaps, via a keystroke. In that
+            ;; situation, positions are between the graphemes and so we might find information
+            ;; in the position to the right or we might find information in the position
+            ;; to the left. So if the start and end position are the same position, check
+            ;; both. When the position comes from a mouse over, however, looking backwards
+            ;; will look wrong, as the position we calculate from the mouse coordinates
+            ;; is always the one bfeore.
             (define/private (position-range->binding-arrows the-text the-start-pos the-end-pos
-                                                            include-require-arrows?)
+                                                            include-require-arrows?
+                                                            #:include-unused-binders? [include-unused-binders? #f]
+                                                            #:also-look-backward-one? [also-look-backward-one? #t])
               (cond
-                [(= the-start-pos the-end-pos)
-                 (define forward (position->binding-arrows the-text the-start-pos include-require-arrows?))
+                [(and (= the-start-pos the-end-pos) also-look-backward-one?)
+                 (define forward (position->binding-arrows the-text the-start-pos include-require-arrows?
+                                                           #:include-unused-binders? include-unused-binders?))
                  (cond
                    [(and (null? forward)
                          (not (zero? the-start-pos)))
                     ;; if we don't find anything here, check behind us.
                     ;; (but only when there isn't a selection)
-                    (position->binding-arrows the-text (- the-start-pos 1) include-require-arrows?)]
+                    (position->binding-arrows the-text (- the-start-pos 1) include-require-arrows?
+                                              #:include-unused-binders? include-unused-binders?)]
                    [else forward])]
                 [else
                  (apply
                   append
                   (for/list ([the-pos (in-range the-start-pos (+ the-end-pos 1))])
-                    (position->binding-arrows the-text the-pos include-require-arrows?)))]))
+                    (position->binding-arrows the-text the-pos include-require-arrows?
+                                              #:include-unused-binders? include-unused-binders?)))]))
 
-            (define/private (position->binding-arrows the-text the-pos include-require-arrows?)
+            (define/private (position->binding-arrows the-text the-pos include-require-arrows?
+                                                      #:include-unused-binders? include-unused-binders?)
               (define binding-arrows '())
-              (define (add-binding-arrow arr)
+              (define (add-var-binding-arrow arr)
                 (when (or include-require-arrows?
                           (not (var-arrow-require-arrow? arr)))
                   (set! binding-arrows (cons arr binding-arrows))))
               (define arrs (fetch-arrow-records the-text the-pos))
               (when arrs
                 (for ([arrow (in-list arrs)])
-                  (when (var-arrow? arrow)
-                    (cond
-                      [(and (equal? (var-arrow-start-text arrow) the-text)
-                            (<= (var-arrow-start-pos-left arrow) the-pos)
-                            (< the-pos (var-arrow-start-pos-right arrow)))
-                       ;; a binding occurrence => keep it
-                       (add-binding-arrow arrow)]
-                      [else
-                       ;; a bound occurrence => find binders
-                       (for ([candidate-binder
-                              (in-list (fetch-arrow-records (var-arrow-start-text arrow)
-                                                            (var-arrow-start-pos-left arrow)))])
-                         (when (var-arrow? candidate-binder)
-                           (when (and (equal? (var-arrow-start-text arrow)
-                                              (var-arrow-start-text candidate-binder))
-                                      (equal? (var-arrow-start-pos-left arrow)
-                                              (var-arrow-start-pos-left candidate-binder))
-                                      (equal? (var-arrow-start-pos-right arrow)
-                                              (var-arrow-start-pos-right candidate-binder)))
-                             (add-binding-arrow candidate-binder))))]))))
+                  (cond
+                    [(unused-binder? arrow)
+                     (when include-unused-binders?
+                       (set! binding-arrows (cons arrow binding-arrows)))]
+                    [(var-arrow? arrow)
+                     (cond
+                       [(and (equal? (var-arrow-start-text arrow) the-text)
+                             (<= (var-arrow-start-pos-left arrow) the-pos)
+                             (< the-pos (var-arrow-start-pos-right arrow)))
+                        ;; a binding occurrence => keep it
+                        (add-var-binding-arrow arrow)]
+                       [else
+                        ;; a bound occurrence => find binders
+                        (for ([candidate-binder
+                               (in-list (fetch-arrow-records (var-arrow-start-text arrow)
+                                                             (var-arrow-start-pos-left arrow)))])
+                          (when (var-arrow? candidate-binder)
+                            (when (and (equal? (var-arrow-start-text arrow)
+                                               (var-arrow-start-text candidate-binder))
+                                       (equal? (var-arrow-start-pos-left arrow)
+                                               (var-arrow-start-pos-left candidate-binder))
+                                       (equal? (var-arrow-start-pos-right arrow)
+                                               (var-arrow-start-pos-right candidate-binder)))
+                              (add-var-binding-arrow candidate-binder))))])])))
               binding-arrows)
 
             (define (binding-arrows->identifiers-hash include-require-arrows? binding-arrows)
@@ -1678,30 +1722,37 @@ If the namespace does not, they are colored the unbound color.
                   (set! identifiers-hash (make-hash))
                   (define already-considered (make-hash))
                   (for ([binding-arrow (in-list binding-arrows)])
-                    (add-one (var-arrow-start-text binding-arrow)
-                             (var-arrow-start-pos-left binding-arrow)
-                             (var-arrow-start-pos-right binding-arrow))
-                    (define range-to-consider
-                      (cons (var-arrow-start-pos-left binding-arrow)
-                            (var-arrow-start-pos-right binding-arrow)))
-                    (unless (hash-ref already-considered range-to-consider #f)
-                      (hash-set! already-considered range-to-consider #t)
-                      (for ([pos (in-range (car range-to-consider) (cdr range-to-consider))])
-                        (for ([arrow (in-list (fetch-arrow-records 
-                                               (var-arrow-start-text binding-arrow)
-                                               pos))])
-                          (when (var-arrow? arrow)
-                            (when (or include-require-arrows?
-                                      (not (var-arrow-require-arrow? arrow)))
-                              (when (and (equal? (var-arrow-start-text arrow)
-                                                 (var-arrow-start-text binding-arrow))
-                                         (equal? (var-arrow-start-pos-left arrow)
-                                                 (var-arrow-start-pos-left binding-arrow))
-                                         (equal? (var-arrow-start-pos-right arrow)
-                                                 (var-arrow-start-pos-right binding-arrow)))
-                                (add-one (var-arrow-end-text arrow)
-                                         (var-arrow-end-pos-left arrow)
-                                         (var-arrow-end-pos-right arrow))))))))))
+                    (cond
+                      [(unused-binder? binding-arrow)
+                       (add-one (unused-binder-text binding-arrow)
+                                (unused-binder-pos-left binding-arrow)
+                                (unused-binder-pos-right binding-arrow))]
+                      [else
+                       (add-one (var-arrow-start-text binding-arrow)
+                                (var-arrow-start-pos-left binding-arrow)
+                                (var-arrow-start-pos-right binding-arrow))
+                       (define range-to-consider
+                         (cons (var-arrow-start-pos-left binding-arrow)
+                               (var-arrow-start-pos-right binding-arrow)))
+                       (unless (hash-ref already-considered range-to-consider #f)
+                         (hash-set! already-considered range-to-consider #t)
+                         (for ([pos (in-range (car range-to-consider) (cdr range-to-consider))])
+                           (for ([arrow (in-list (or (fetch-arrow-records
+                                                      (var-arrow-start-text binding-arrow)
+                                                      pos)
+                                                     '()))])
+                             (when (var-arrow? arrow)
+                               (when (or include-require-arrows?
+                                         (not (var-arrow-require-arrow? arrow)))
+                                 (when (and (equal? (var-arrow-start-text arrow)
+                                                    (var-arrow-start-text binding-arrow))
+                                            (equal? (var-arrow-start-pos-left arrow)
+                                                    (var-arrow-start-pos-left binding-arrow))
+                                            (equal? (var-arrow-start-pos-right arrow)
+                                                    (var-arrow-start-pos-right binding-arrow)))
+                                   (add-one (var-arrow-end-text arrow)
+                                            (var-arrow-end-pos-left arrow)
+                                            (var-arrow-end-pos-right arrow))))))))])))
                 identifiers-hash)
               get-identifiers-hash)
             
@@ -1883,7 +1934,7 @@ If the namespace does not, they are colored the unbound color.
             ;; callback for the jump popup menu item
             (define/private (jump-to-next-callback start-pos end-pos txt backwards?)
               (define-values (_binders make-identifiers-hash)
-                (position->matching-identifiers-hash txt start-pos end-pos #f))
+                (position->matching-identifiers-hash txt start-pos end-pos))
               (define orig-arrows 
                 (sort (hash-map (make-identifiers-hash)
                                 (λ (x y) x))
@@ -2086,14 +2137,14 @@ If the namespace does not, they are colored the unbound color.
               (send (get-frame) hide-error-report))))
         
         (define/public (syncheck:clear-highlighting)
-          (let ([definitions (get-defs)])
-            (when (send definitions syncheck:arrows-visible?)
-              (let ([locked? (send definitions is-locked?)])
-                (send definitions begin-edit-sequence #f #f)
-                (send definitions lock #f)
-                (send definitions syncheck:clear-arrows)
-                (send definitions lock locked?)
-                (send definitions end-edit-sequence)))))
+          (define definitions (get-defs))
+          (when (send definitions syncheck:arrows-visible?)
+            (define locked? (send definitions is-locked?))
+            (send definitions begin-edit-sequence #f #f)
+            (send definitions lock #f)
+            (send definitions syncheck:clear-arrows)
+            (send definitions lock locked?)
+            (send definitions end-edit-sequence)))
         
         (define/augment (can-close?)
           (and (send report-error-text can-close?)
@@ -2137,15 +2188,17 @@ If the namespace does not, they are colored the unbound color.
           (update-button-visibility/settings (send (send tab get-defs) get-next-settings)))
         (inherit sort-toolbar-buttons-panel)
         (define/public (update-button-visibility/settings settings)
-          (let* ([lang (drracket:language-configuration:language-settings-language settings)]
-                 [visible? (and (not (is-a? lang drracket:module-language:module-language<%>))
-                                (send lang capability-value 'drscheme:check-syntax-button))])
-            (send (get-button-panel) change-children
-                  (λ (l)
-                    (if visible?
-                        (cons check-syntax-button (remq check-syntax-button l))
-                        (remq check-syntax-button l))))
-            (sort-toolbar-buttons-panel)))
+          (define lang (drracket:language-configuration:language-settings-language settings))
+          (define visible?
+            (and (not (is-a? lang drracket:module-language:module-language<%>))
+                 (send lang capability-value 'drscheme:check-syntax-button)))
+          (send (get-button-panel)
+                change-children
+                (λ (l)
+                  (if visible?
+                      (cons check-syntax-button (remq check-syntax-button l))
+                      (remq check-syntax-button l))))
+          (sort-toolbar-buttons-panel))
         
         ;; set-syncheck-running-mode : (or/c (box boolean?) 'button #f) -> boolean
         ;; records how a particular check syntax is being played out in the editor right now.
@@ -2206,7 +2259,7 @@ If the namespace does not, they are colored the unbound color.
                ;; if we've been asked to stop (because some new results are ready
                ;; and another trace is running).
                (void)]
-              [(and (i . > . 0)  ;; check i just in case things are really strange
+              [(and (positive? i)  ;; check i just in case things are really strange
                     (20 . <= . (- (current-inexact-milliseconds) start-time)))
                (queue-callback
                 (λ ()
@@ -2248,16 +2301,18 @@ If the namespace does not, they are colored the unbound color.
              (send defs-text syncheck:add-text-type defs-text start fin text-type)]
             [`#(syncheck:add-background-color ,start ,fin ,color) ; unused
              (send defs-text syncheck:add-background-color defs-text start fin color)]
-            [`#(syncheck:add-jump-to-definition ,start ,end ,id ,filename ,submods)
-             (send defs-text syncheck:add-jump-to-definition defs-text start end id filename submods)]
+            [`#(syncheck:add-jump-to-definition/phase-level+space ,start ,end ,id ,filename ,submods ,phase-level)
+             (send defs-text syncheck:add-jump-to-definition/phase-level+space defs-text start end id filename submods phase-level)]
 
             [`#(syncheck:add-require-open-menu ,start-pos ,end-pos ,file)
              (send defs-text syncheck:add-require-open-menu defs-text start-pos end-pos file)]
             [`#(syncheck:add-docs-menu ,start-pos ,end-pos ,key ,the-label ,path ,definition-tag ,tag)
              (send defs-text syncheck:add-docs-menu defs-text start-pos end-pos
                    key the-label path definition-tag tag)]
-            [`#(syncheck:add-definition-target ,start-pos ,end-pos ,id ,mods)
-             (send defs-text syncheck:add-definition-target defs-text start-pos end-pos id mods)]
+            [`#(syncheck:add-definition-target/phase-level+space ,start-pos ,end-pos ,id ,mods ,phase-level)
+             (send defs-text syncheck:add-definition-target/phase-level+space defs-text start-pos end-pos id mods phase-level)]
+            [`#(syncheck:unused-binder ,start-pos ,end-pos)
+             (send defs-text syncheck:unused-binder defs-text start-pos end-pos)]
             [`#(syncheck:add-id-set ,to-be-renamed/poss ,name-dup-pc ,name-dup-id)
              (define to-be-renamed/poss/fixed
                (for/list ([lst (in-list to-be-renamed/poss)])
@@ -2337,8 +2392,7 @@ If the namespace does not, they are colored the unbound color.
                [parent report-error-panel]
                [callback (λ (x y) (hide-error-report))]
                [stretchable-height #t])
-          (define res (make-object vertical-panel% report-error-parent-panel))
-          res)
+          (make-object vertical-panel% report-error-parent-panel))
         
         (define/public-final (syncheck:error-report-visible?)
           (and (is-a? report-error-parent-panel area-container<%>)
@@ -2407,15 +2461,13 @@ If the namespace does not, they are colored the unbound color.
                       (λ ()
                         (unless (= 0 (send (send the-tab get-error-report-text) last-position))
                           (show-error-report/tab)))))))))
-            (define kill-termination
-              (λ ()
-                (unless normal-termination?
-                  (parameterize ([current-eventspace drs-eventspace])
-                    (queue-callback
-                     (λ ()
-                       (send the-tab syncheck:clear-highlighting)
-                       (cleanup)
-                       (custodian-shutdown-all user-custodian)))))))
+            (define (kill-termination)
+              (unless normal-termination?
+                (parameterize ([current-eventspace drs-eventspace])
+                  (queue-callback (λ ()
+                                    (send the-tab syncheck:clear-highlighting)
+                                    (cleanup)
+                                    (custodian-shutdown-all user-custodian))))))
             (define error-display-semaphore (make-semaphore 0))
             (define uncaught-exception-raised
               (λ () ;; =user=
@@ -2555,12 +2607,12 @@ If the namespace does not, they are colored the unbound color.
         ;; sets and restores some state of the definitions text
         ;; so that edits to the definitions text work out.
         (define/private (with-lock/edit-sequence definitions-text thnk)
-          (let* ([locked? (send definitions-text is-locked?)])
-            (send definitions-text begin-edit-sequence #t #f)
-            (send definitions-text lock #f)
-            (thnk)
-            (send definitions-text end-edit-sequence)
-            (send definitions-text lock locked?)))
+          (define locked? (send definitions-text is-locked?))
+          (send definitions-text begin-edit-sequence #t #f)
+          (send definitions-text lock #f)
+          (thnk)
+          (send definitions-text end-edit-sequence)
+          (send definitions-text lock locked?))
                 
         (super-new)
         
@@ -2583,23 +2635,23 @@ If the namespace does not, they are colored the unbound color.
             "check syntax"
             (λ (obj evt)
               (when (is-a? obj editor<%>)
-                (let ([canvas (send obj get-canvas)])
-                  (when canvas
-                    (let ([frame (send canvas get-top-level-window)])
-                      (when (is-a? frame syncheck-frame<%>)
-                        (send frame syncheck:button-callback))))))))
+                (define canvas (send obj get-canvas))
+                (when canvas
+                  (define frame (send canvas get-top-level-window))
+                  (when (is-a? frame syncheck-frame<%>)
+                    (send frame syncheck:button-callback))))))
       
       (let ([cs-callback
              (λ (send-msg)
                (λ (obj evt)
                  (when (is-a? obj text%)
-                   (let ([canvas (send obj get-canvas)])
-                     (when canvas
-                       (let ([frame (send canvas get-top-level-window)])
-                         (when (is-a? frame syncheck-frame<%>)
-                           (let ([defs (send frame get-definitions-text)])
-                             (when (is-a? defs syncheck-text<%>)
-                               (send-msg defs obj))))))))))])
+                   (define canvas (send obj get-canvas))
+                   (when canvas
+                     (define frame (send canvas get-top-level-window))
+                     (when (is-a? frame syncheck-frame<%>)
+                       (define defs (send frame get-definitions-text))
+                       (when (is-a? defs syncheck-text<%>)
+                         (send-msg defs obj)))))))])
         (send keymap add-function
               (string-constant cs-jump-to-binding)
               (cs-callback (λ (defs obj) (send defs syncheck:jump-to-binding-occurrence obj))))
@@ -2669,12 +2721,12 @@ If the namespace does not, they are colored the unbound color.
         (cond
           [(is-a? text syncheck-text<%>) text]
           [else 
-           (let ([admin (send text get-admin)])
-             (and (is-a? admin editor-snip-editor-admin<%>)
-                  (let* ([enclosing-editor-snip (send admin get-snip)]
-                         [editor-snip-admin (send enclosing-editor-snip get-admin)]
-                         [enclosing-editor (send editor-snip-admin get-editor)])
-                    (loop enclosing-editor))))])))
+           (define admin (send text get-admin))
+           (and (is-a? admin editor-snip-editor-admin<%>)
+                (let* ([enclosing-editor-snip (send admin get-snip)]
+                       [editor-snip-admin (send enclosing-editor-snip get-admin)]
+                       [enclosing-editor (send editor-snip-admin get-editor)])
+                  (loop enclosing-editor)))])))
     ;                                                 
     ;                                                 
     ;                                                 
@@ -2698,7 +2750,7 @@ If the namespace does not, they are colored the unbound color.
                                              syncheck-add-to-preferences-panel)
     (drracket:module-language-tools:register-online-expansion-pref 
      syncheck-add-to-online-expansion-prefs-panel)
-    (drracket:language:register-capability 'drscheme:check-syntax-button (flat-contract boolean?) #t)
+    (drracket:language:register-capability 'drscheme:check-syntax-button boolean? #t)
     (drracket:get/extend:extend-definitions-text make-syncheck-text%)
     (drracket:get/extend:extend-interactions-text docs-text-ints-mixin)
     (drracket:get/extend:extend-definitions-canvas docs-editor-canvas-mixin)

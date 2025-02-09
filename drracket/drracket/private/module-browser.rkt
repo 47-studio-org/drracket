@@ -1,24 +1,20 @@
 #lang racket/base
 
-(require racket/gui/base
-         racket/class
-         racket/set
-         racket/contract
-         racket/list
-         syntax/moddep
-         syntax/toplevel
-         framework
-         string-constants
-         mrlib/graph
-         drracket/private/drsig
-         "eval-helpers-and-pref-init.rkt"
-         racket/unit
-         racket/async-channel
-         racket/match
-         setup/private/lib-roots
-         racket/port
+(require drracket/private/drsig
          drracket/private/rectangle-intersect
-         drracket/private/standalone-module-browser)
+         drracket/private/standalone-module-browser
+         framework
+         mrlib/graph
+         racket/async-channel
+         racket/class
+         racket/contract
+         racket/gui/base
+         racket/port
+         racket/set
+         racket/unit
+         string-constants
+         syntax/moddep
+         "eval-helpers-and-pref-init.rkt")
 
 (provide module-overview@)
 
@@ -27,29 +23,23 @@
 (define original-output-port (current-output-port))
 (define original-error-port (current-error-port))
 
-(define filename-constant (string-constant module-browser-filename-format))
-(define font-size-gauge-label (string-constant module-browser-font-size-gauge-label))
-(define progress-label (string-constant module-browser-progress-label))
-(define laying-out-graph-label (string-constant module-browser-laying-out-graph-label))
-(define open-file-format (string-constant module-browser-open-file-format))
-(define lib-paths-checkbox-constant (string-constant module-browser-show-lib-paths))
-
 (define (set-box/f b v) (when (box? b) (set-box! b v)))
 
 (define-unit module-overview@
   (import [prefix drracket:frame: drracket:frame^]
           [prefix drracket:eval: drracket:eval^]
           [prefix drracket:language-configuration: drracket:language-configuration/internal^]
-          [prefix drracket:language: drracket:language^])
+          [prefix drracket:language: drracket:language^]
+          [prefix drracket:module-language: drracket:module-language/int^])
   (export (rename drracket:module-overview^ 
                   [_module-overview/file module-overview/file]
                   [_make-module-overview-pasteboard make-module-overview-pasteboard]))
   
   (define (module-overview parent)
-    (let ([filename (get-file #f parent)])
-      (when filename
-        (module-overview/file filename parent fill-pasteboard
-                              overview-frame% canvas:basic% pasteboard:basic%))))
+    (define filename (get-file #f parent))
+    (when filename
+      (module-overview/file filename parent fill-pasteboard
+                            overview-frame% canvas:basic% pasteboard:basic%)))
   
 
   (define (_module-overview/file filename parent) 
@@ -84,14 +74,15 @@
   (define (fill-pasteboard pasteboard filename-or-text/pos show-status send-user-thread/eventspace)
     
     (define text/pos 
-      (if (drracket:language:text/pos? filename-or-text/pos)
-          filename-or-text/pos
-          (let ([t (make-object text:basic%)])
-            (send t load-file filename-or-text/pos)
-            (drracket:language:text/pos
-             t
-             0
-             (send t last-position)))))
+      (cond
+        [(drracket:language:text/pos? filename-or-text/pos) filename-or-text/pos]
+        [else
+         (define t (make-object text:basic%))
+         (send t load-file filename-or-text/pos)
+         (drracket:language:text/pos
+          t
+          0
+          (send t last-position))]))
     
     (define progress-channel (make-async-channel))
     (define connection-channel (make-async-channel))
@@ -114,31 +105,32 @@
     (define user-thread #f)
     (define error-str #f)
     
-    (define init-dir
+    (define init-filename
       (let* ([bx (box #f)]
              [filename (send (drracket:language:text/pos-text text/pos) get-filename bx)])
-        (get-init-dir 
-         (and (not (unbox bx)) filename))))
+        (and (not (unbox bx)) filename)))
+    (define init-dir (and init-filename (get-init-dir init-filename)))
     
     (define (init)
       (set! user-custodian (current-custodian))
       (set! user-thread (current-thread))
       (moddep-current-open-input-file
        (λ (filename)
-         (let* ([p (open-input-file filename)]
-                [wxme? (regexp-match-peek #rx#"^WXME" p)])
-           (if wxme?
-               (let ([t (new text%)])
-                 (close-input-port p)
-                 (send t load-file filename)
-                 (let ([prt (open-input-text-editor t)])
-                   (port-count-lines! prt)
-                   prt))
-               p))))
+         (define p (open-input-file filename))
+         (define wxme? (regexp-match-peek #rx#"^WXME" p))
+         (cond
+           [wxme?
+            (define t (new text%))
+            (close-input-port p)
+            (send t load-file filename)
+            (define prt (open-input-text-editor t))
+            (port-count-lines! prt)
+            prt]
+           [else p])))
       (current-output-port (swallow-specials original-output-port))
       (current-error-port (swallow-specials original-error-port))
       (current-load-relative-directory #f)
-      (current-directory init-dir)
+      (when init-dir (current-directory init-dir))
       (error-display-handler (λ (str exn) 
                                (set! error-str str)
                                (when (exn? exn)
@@ -182,7 +174,9 @@
     (define complete-program? #t)
 
     ((drracket:eval:traverse-program/multiple
-      (preferences:get (drracket:language-configuration:get-settings-preferences-symbol))
+      (drracket:module-language:disable-debugging-et-al
+       (preferences:get
+        (drracket:language-configuration:get-settings-preferences-symbol)))
       init
       kill-termination)
      text/pos
@@ -201,27 +195,26 @@
        (sync (thread-dead-evt user-thread))
        (async-channel-put connection-channel 'done)))
     
-    (send pasteboard begin-adding-connections)
+    (send pasteboard begin-adding-connections init-filename)
     (let ([evt
            (choice-evt
             (handle-evt progress-channel (λ (x) (cons 'progress x)))
             (handle-evt connection-channel (λ (x) (cons 'connect x))))])
       (let loop ()
-        (let* ([evt-value (yield evt)]
-               [key (car evt-value)]
-               [val (cdr evt-value)])
-          (case key
-            [(progress) 
-             (show-status val)
-             (loop)]
-            [(connect)
-             (unless (eq? val 'done)
-               (let ([name-original (list-ref val 0)]
-                     [name-require (list-ref val 1)]
-                     [path-key (list-ref val 2)]
-                     [require-depth (list-ref val 3)])
-                 (send pasteboard add-connection name-original name-require path-key require-depth))
-               (loop))]))))
+        (define evt-value (yield evt))
+        (define key (car evt-value))
+        (define val (cdr evt-value))
+        (case key
+          [(progress) 
+           (show-status val)
+           (loop)]
+          [(connect)
+           (unless (eq? val 'done)
+             (let ([name-original (list-ref val 0)]
+                   [name-require (list-ref val 1)]
+                   [require-depth (list-ref val 2)])
+               (send pasteboard add-connection name-original name-require require-depth))
+             (loop))])))
     (send pasteboard end-adding-connections)
     
     (custodian-shutdown-all user-custodian)

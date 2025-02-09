@@ -83,13 +83,12 @@
                                 "\n\n" output))]
                  [else
                   (message-box (string-constant drracket)
-                               (string-append
-                                (format (string-constant adding-racket/bin-to-path-failed)
-                                        (if (equal? output "")
-                                            ""
-                                            (string-append "\n\n" output "\n\n"))
-                                        paths.d/racket
-                                        bin-dir)))])
+                               (format (string-constant adding-racket/bin-to-path-failed)
+                                       (if (equal? output "")
+                                           ""
+                                           (string-append "\n\n" output "\n\n"))
+                                       paths.d/racket
+                                       bin-dir))])
                (void))
              (new menu-item%
                   [label (string-constant add-racket/bin-to-path)]
@@ -234,7 +233,7 @@
 
   (define (bound-by-menu? binding menu-table)
     (ormap (λ (constituent)
-             (hash-ref menu-table (string->symbol constituent) (λ () #f)))
+             (hash-ref menu-table (string->symbol constituent) #f))
            (regexp-split #rx";" (symbol->string (car binding)))))
   
   (define (get-menu-bindings frame)
@@ -331,12 +330,10 @@
           [prefix drracket:app: drracket:app^]
           [prefix help: drracket:help-desk^]
           [prefix drracket:multi-file-search: drracket:multi-file-search^]
-          [prefix drracket:init: drracket:init^]
+          [prefix drracket:init: drracket:init/int^]
           [prefix drracket: drracket:interface^])
   (export (rename drracket:frame/int^
                   [-mixin mixin]))
-  
-  (define last-keybindings-planet-attempt "")
   
   (define basics-mixin
     (mixin (frame:standard-menus<%>) (drracket:frame:basics<%>)
@@ -461,36 +458,15 @@
                       (λ (x y)
                         (with-handlers ([exn? (λ (x)
                                                 (printf "~a\n" (exn-message x)))])
-                          (let ([filename (finder:get-file
-                                           #f
-                                           (string-constant keybindings-choose-user-defined-file)
-                                           #f
-                                           ""
-                                           this)])
-                            (when filename
-                              (add-keybindings-item/update-prefs filename)))))))
-                (new menu-item%
-                     (parent keybindings-menu)
-                     (label (string-constant keybindings-add-user-defined-keybindings/planet))
-                     (callback
-                      (λ (x y)
-                        (define planet-spec
-                          (get-text-from-user (string-constant drscheme)
-                                              (string-constant keybindings-type-planet-spec)
-                                              this
-                                              last-keybindings-planet-attempt))
-                        (when planet-spec
-                          (set! last-keybindings-planet-attempt planet-spec)
-                          (cond
-                            [(planet-string-spec? planet-spec)
-                             =>
-                             (λ (planet-sexp-spec)
-                               (add-keybindings-item/update-prefs planet-sexp-spec))]
-                            [else
-                             (message-box (string-constant drscheme)
-                                          (format (string-constant keybindings-planet-malformed-spec)
-                                                  planet-spec)
-                                          #:dialog-mixin frame:focus-table-mixin)])))))
+                          (define filename
+                            (finder:get-file
+                             #f
+                             (string-constant keybindings-choose-user-defined-file)
+                             #f
+                             ""
+                             this))
+                          (when filename
+                            (add-keybindings-item/update-prefs filename))))))
                 (define ud (preferences:get 'drracket:user-defined-keybindings))
                 (unless (null? ud)
                   (new separator-menu-item% (parent keybindings-menu))
@@ -515,12 +491,12 @@
                              (preferences:get 'drracket:user-defined-keybindings)))))
   
   (define (planet-string-spec? p)
-    (let ([sexp
-           (with-handlers ([exn:fail:read? (λ (x) #f)])
-             (read (open-input-string p)))])
-      (and sexp
-           (planet-spec? sexp)
-           sexp)))
+    (define sexp
+      (with-handlers ([exn:fail:read? (λ (x) #f)])
+        (read (open-input-string p))))
+    (and sexp
+         (planet-spec? sexp)
+         sexp))
   
   (define (planet-spec? p)
     (match p
@@ -674,9 +650,8 @@
        (define tmp-filename (make-temporary-file "tmp~a.plt"))
        (define d (make-object dialog% (string-constant downloading) parent))
        (define message (make-object message% (string-constant downloading-file...) d))
-       (define gauge (if size 
-                         (make-object gauge% #f 100 d) 
-                         #f))
+       (define gauge (and size 
+                          (make-object gauge% #f 100 d)))
        (define exn #f)
        ; Semaphores to avoid race conditions: 
        (define wait-to-start (make-semaphore 0))
@@ -694,16 +669,15 @@
               (semaphore-post wait-to-break) 
               (with-output-to-file tmp-filename 
                 (λ () 
-                  (let loop ([total 0]) 
+                  (let loop ([total 0])
                     (when gauge 
                       (send gauge set-value  
                             (inexact->exact 
-                             (floor (* 100 (/ total size)))))) 
-                    (let ([s (read-string 1024 port)]) 
-                      (unless (eof-object? s) 
-                        (unless (eof-object? s) 
-                          (display s) 
-                          (loop (+ total (string-length s))))))))
+                             (floor (* 100 (/ total size))))))
+                    (define s (read-string 1024 port))
+                    (unless (eof-object? s) 
+                      (display s)
+                      (loop (+ total (string-length s))))))
                 #:mode 'binary #:exists 'truncate))
             (send d show #f))))
        (send d center) 
@@ -793,28 +767,29 @@
                        bp2 (λ x (send this show #f))))
 
       (define/private (update-bindings)
-        (let ([format-binding/name
-               (λ (b) (format "~a (~a)" (cadr b) (car b)))]
-              [format-binding/key
-               (λ (b) (format "~a (~a)" (car b) (cadr b)))]
-              [predicate/key
-               (λ (a b) (string-ci<=? (format "~a" (car a))
-                                      (format "~a" (car b))))]
-              [predicate/name
-               (λ (a b) (string-ci<=? (cadr a) (cadr b)))])
-          (send lb set
-                (if by-key?
-                    (map format-binding/key (sort (filter-search bindings) predicate/key))
-                    (map format-binding/name (sort (filter-search bindings) predicate/name))))))
+        (define (format-binding/name b)
+          (format "~a (~a)" (cadr b) (car b)))
+        (define (format-binding/key b)
+          (format "~a (~a)" (car b) (cadr b)))
+        (define (predicate/key a b)
+          (string-ci<=? (format "~a" (car a))
+                        (format "~a" (car b))))
+        (define (predicate/name a b)
+          (string-ci<=? (cadr a) (cadr b)))
+        (send lb set
+              (if by-key?
+                  (map format-binding/key (sort (filter-search bindings) predicate/key))
+                  (map format-binding/name (sort (filter-search bindings) predicate/name)))))
       
       (define/private (filter-search bindings)
-        (let ([str (send search-field get-value)])
-          (if (equal? str "")
-              bindings
-              (let ([reg (regexp (regexp-quote str #f))])
-                (filter (λ (x) (or (regexp-match reg (cadr x))
-                                   (regexp-match reg (format "~a" (car x)))))
-                        bindings)))))
+        (define str (send search-field get-value))
+        (cond
+          [(equal? str "") bindings]
+          [else
+           (define reg (regexp (regexp-quote str #f)))
+           (filter (λ (x) (or (regexp-match reg (cadr x))
+                              (regexp-match reg (format "~a" (car x)))))
+                   bindings)]))
       (send search-field focus)
       (send bp stretchable-height #f)
       (send bp set-alignment 'center 'center)
@@ -960,6 +935,16 @@
          (demand-callback
           (λ (menu)
             (handler:install-recent-items menu))))
+    (new menu:can-restore-menu-item%
+         (label (string-constant reopen-closed-tab))
+         (shortcut #\t)
+         (shortcut-prefix (cons 'shift (get-default-shortcut-prefix)))
+         (parent file-menu)
+         [demand-callback (λ (item) (send item enable (pair? (preferences:get 'drracket:recently-closed-tabs))))]
+         (callback
+          (λ (x y)
+            (define fr (handler:edit-file #f))
+            (send fr reopen-closed-tab))))
     (new menu-item%
          [label (string-constant mfs-multi-file-search-menu-item)]
          [parent file-menu]
@@ -1006,7 +991,7 @@
                                   dlg-parent))
             (case rslt
               [(1) (send-url "https://lists.racket-lang.org/")]
-              [(2) (send-url "https://github.com/racket/racket/issues/new")]))])
+              [(2) (send-url "https://github.com/racket/racket/issues/new/choose")]))])
     (add-menu-path-item menu)
     (drracket:app:add-language-items-to-help-menu menu)))
 

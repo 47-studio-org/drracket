@@ -5,11 +5,11 @@
 (define deps '("scheme-lib"
                "data-lib"
                "compiler-lib"
-               ["base" #:version "6.2.900.15"]
+               ["base" #:version "8.2.0.8"]
                "planet-lib"
                "compatibility-lib"
                ["draw-lib" #:version "1.7"]
-               ["errortrace-lib" #:version "1.3"]
+               ["errortrace-lib" #:version "1.5"]
                "macro-debugger-text-lib"
                "parser-tools-lib"
                "pconvert-lib"
@@ -18,10 +18,10 @@
                "sandbox-lib"
                ("scribble-lib" #:version "1.11")
                ("snip-lib" #:version "1.2")
-               ["string-constants-lib" #:version "1.38"]
+               ["string-constants-lib" #:version "1.47"]
                "typed-racket-lib"
                "wxme-lib"
-               ["gui-lib" #:version "1.57"]
+               ["gui-lib" #:version "1.74"]
                ("racket-index" #:version "1.2")
                ["racket-doc" #:version "1.1"]
                "html-lib"
@@ -32,15 +32,16 @@
                ["macro-debugger" #:version "1.1"]
                "net-lib"
                "tex-table"
-               "htdp-lib"
+               ["htdp-lib" #:version "1.7"]
                ("drracket-plugin-lib" #:version "1.1")
                "gui-pkg-manager-lib"
                "drracket-tool-lib"
                "drracket-tool-doc"
                "pict-snip-lib"
                "option-contract-lib"
-               "syntax-color-lib"
-               "quickscript"))
+               ("syntax-color-lib" #:version "1.4")
+               "quickscript"
+               "simple-tree-text-markup-lib"))
 
 (define build-deps '("mzscheme-doc"
                      "net-doc"
@@ -54,7 +55,9 @@
                      "profile-doc"
                      "r5rs-doc"
                      "at-exp-lib"
-                     "rackunit-lib"))
+                     "rackunit-lib"
+                     "scheme-doc"
+                     "syntax-color-doc"))
 
 ;; implies drracket-tool-lib so that others dependencies don't break
 ;; (redex, in particular, used to depend on drracket but it really
@@ -65,4 +68,7 @@
 
 (define pkg-authors '(robby))
 
-(define version "1.9")
+(define version "1.15")
+
+(define license
+  '(Apache-2.0 OR MIT))

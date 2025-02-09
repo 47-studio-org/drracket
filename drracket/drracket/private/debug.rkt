@@ -1,6 +1,6 @@
 #lang racket/base
 
-(require errortrace/errortrace-key
+(require "drracket-errortrace-key.rkt"
          racket/unit
          racket/contract
          errortrace/stacktrace
@@ -29,7 +29,8 @@
          pkg/gui
          (for-syntax images/icons/misc images/icons/style images/icons/control images/logos)
          (for-syntax racket/base)
-         (submod "frame.rkt" install-pkg))
+         (submod "frame.rkt" install-pkg)
+         (only-in simple-tree-text-markup/port srclocs-special<%>))
 
 (define orig (current-output-port))
 (define (oprintf . args) (apply fprintf orig args))
@@ -44,7 +45,7 @@
           [prefix drracket:unit: drracket:unit/int^]
           [prefix drracket:language: drracket:language^]
           [prefix drracket:language-configuration: drracket:language-configuration/internal^]
-          [prefix drracket:init: drracket:init^]
+          [prefix drracket:init: drracket:init/int^]
           [prefix drracket: drracket:interface^])
   (export drracket:debug/int^)
   
@@ -67,7 +68,7 @@
   (define (cms->srclocs cms)
     (map 
      errortrace-stack-item->srcloc
-     (continuation-mark-set->list cms errortrace-key)))
+     (continuation-mark-set->list cms drracket-errortrace-key)))
   
   ;; type debug-source = (union symbol (instanceof editor<%>))
   
@@ -82,7 +83,9 @@
   ;; get-error-color : -> (instanceof color%)
   (define (get-error-color)
     (color-prefs:lookup-in-color-scheme
-     'drracket:error-background-highlighting))
+     (get-error-color-name)))
+  (define (get-error-color-name)
+    'drracket:error-background-highlighting)
   
   (define arrow-cursor (make-object cursor% 'arrow))
   (define (clickable-snip-mixin snip%)
@@ -214,17 +217,22 @@
   (define (make-note% filename bitmap)
     (and (send bitmap ok?)
          (letrec ([note%
-                   (class clickable-image-snip%
+                   (class* clickable-image-snip% (srclocs-special<%>)
                      (inherit get-callback)
                      (define/public (get-image-name) filename)
                      (define stack1 #f)
                      (define stack2 #f)
                      (define/public (set-stacks s1 s2) (set! stack1 s1) (set! stack2 s2))
                      (define/public (get-stacks) (values stack1 stack2))
+                     (define srclocs #f)
+                     (define/public (set-srclocs s)
+                       (set! srclocs s))
+                     (define/public (get-srclocs) srclocs)
                      (define/override (copy) 
                        (let ([n (new note%)])
                          (send n set-callback (get-callback))
                          (send n set-stacks stack1 stack2)
+                         (send n set-srclocs srclocs)
                          n))
                      (super-make-object bitmap))])
            note%)))
@@ -315,7 +323,6 @@
   ;; adds in the bug icon, if there are contexts to display
   (define (make-debug-error-display-handler orig-error-display-handler)
     (define (debug-error-display-handler msg exn)
-      
       (call-with-exception-handler
        (λ (exn)
          (printf "-- ~s\n" exn)
@@ -365,7 +372,9 @@
       (unless (exn:fail:syntax? exn)
         (unless (and (empty-viewable-stack? stack1) (empty-viewable-stack? stack2))
           (unless (zero? (error-print-context-length))
-            (print-bug-to-stderr msg stack1 stack2))))
+            (print-bug-to-stderr msg stack1 stack2)))))
+    (when (or (not (exn:fail:user? exn))
+              (exn:srclocs? exn))
       (display-srclocs-in-error src-locs stack1))
     (display-error-message exn msg)
     (when (exn:fail:syntax? exn)
@@ -391,7 +400,8 @@
            (when (and ints (exn:fail:out-of-memory? exn))
              (define frame (send ints get-top-level-window))
              (send ints no-user-evaluation-dialog frame #f #t #f)))))))
-  
+
+  ;; pre: (port-writes-special? (current-error-port))
   (define (render-message lines)
     (define collected (collect-hidden-lines lines))
     (for ([x (in-list collected)]
@@ -409,7 +419,7 @@
   
   (define (display-error-message exn msg)
     (cond
-      [(exn:fail? exn)
+      [(and (port-writes-special? (current-error-port)) (exn:fail? exn))
        (define lines (regexp-split #rx"\n" msg))
        (cond
          [(ellipsis-candidate? lines)
@@ -559,6 +569,7 @@
         (when file-note%
           (when (port-writes-special? (current-error-port))
             (define note (new file-note%))
+            (send note set-srclocs srcs-to-display)
             (send note set-callback 
                   (λ (snp) (open-and-highlight-in-file srcs-to-display a-viewable-stack)))
             (write-special note (current-error-port))
@@ -630,20 +641,31 @@
           [send-out
            (λ (msg f) 
              (if (port-writes-special? (current-error-port))
-                 (let ([snp (make-object string-snip% msg)])
-                   (f snp)
-                   (write-special snp (current-error-port)))
+                 (let loop ([msg msg])
+                   (cond
+                     [(equal? msg "") (void)]
+                     [(regexp-match-positions #rx"\n" msg)
+                      => (lambda (m)
+                           (loop (substring msg 0 (caar m)))
+                           (display "\n  " (current-error-port))
+                           (loop (substring msg (cdar m))))]
+                     [else
+                      (define snp (make-object string-snip% msg))
+                      (f snp)
+                      (write-special snp (current-error-port))]))
                  (display msg (current-error-port))))])
       (send error-text-style-delta set-delta-foreground (make-object color% 200 0 0))
-      (define (show-one expr)
+      (define (show-one str)
         (display " " (current-error-port))
-        (send-out (format "~s" (syntax->datum expr))
+        (send-out str
                   (λ (snp)
                     (send snp set-style
                           (send (editor:get-standard-style-list) find-or-create-style
                                 (send (editor:get-standard-style-list) find-named-style "Standard")
                                 error-text-style-delta)))))
       (define exprs (exn:fail:syntax-exprs exn))
+      (define strs (for/list ([expr (in-list exprs)])
+                     ((error-syntax->string-handler) expr #f)))
       (define (show-in)
         (send-out " in:"
                   (λ (snp)
@@ -651,16 +673,17 @@
                           (send (editor:get-standard-style-list) find-named-style
                                 (editor:get-default-color-style-name))))))
       (cond
-        [(null? exprs) (void)]
-        [(null? (cdr exprs))
+        [(null? strs) (void)]
+        [(and (null? (cdr strs))
+              (not (regexp-match? #rx"\n" (car strs))))
          (show-in)
-         (show-one (car exprs))]
+         (show-one (car strs))]
         [else
          (show-in)
-         (for-each (λ (expr)
+         (for-each (λ (str)
                      (display "\n " (current-error-port))
-                     (show-one expr))
-                   exprs)])))
+                     (show-one str))
+                   strs)])))
   
   
   ;; insert/clickback : (instanceof text%) (union string (instanceof snip%)) (-> void)
@@ -694,6 +717,8 @@
       [(is-a? src editor<%>) src]
       [else #f]))
   (define with-mark (make-with-mark special-source-handling-for-drr))
+
+  (define key-module-name 'drracket/private/drracket-errortrace-key)
   
   ;; current-backtrace-window : (union #f (instanceof frame:basic<%>))
   ;; the currently visible backtrace window, or #f, if none
@@ -1011,7 +1036,7 @@
                    (< (send from-text get-snip-position snip) para-end-pos))
           (send to-text insert (send snip copy))
           (loop (send snip next))))
-      (send to-text highlight-range (max 0 (- from-start 1)) from-end (get-error-color) #f 'high)
+      (send to-text highlight-range (max 0 (- from-start 1)) from-end (get-error-color-name) #f 'high)
       to-text))
   
   ;; get-filename : debug-source -> string
@@ -2477,7 +2502,7 @@
       
       (super-instantiate ())))
 
-  (define-values/invoke-unit/infer stacktrace/errortrace-annotate@))
+  (define-values/invoke-unit/infer stacktrace/errortrace-annotate/key-module-name@))
 
 (define ellipsis-error-message-field #rx"  [^ ].*[.][.][.]:$")
 

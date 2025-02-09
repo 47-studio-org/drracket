@@ -1,4 +1,165 @@
 ------------------------------
+       Version 8.16
+------------------------------
+
+   . bug fixes specially focused on improving the #lang htdp/ languages
+
+------------------------------
+       Version 8.15
+------------------------------
+
+   . drracket remembers the previously opened files when starting a new session
+
+   . right-clicking on an image to save the file works with picts
+
+   . bug fixes and resyntax improvements to the codebase
+
+------------------------------
+       Version 8.14
+------------------------------
+
+   . add submodule-based filtering to the module browser
+
+   . added a notion of invisible parentheses to the paren matcher,
+     motivated by Rhombus. Invisible parens are a property of the
+     colorer tokens and don't require a token that actually takes up
+     space that's notated as a parenthesis.
+
+   . bug fixes and doc improvements
+
+------------------------------
+       Version 8.13
+------------------------------
+
+   . bug fixes
+
+------------------------------
+       Version 8.12
+------------------------------
+
+   . minor improvements and bug fixes
+
+------------------------------
+       Version 8.11
+------------------------------
+
+   . add indentation guides (<menu-key>-shift-i)
+
+   . generalize comment-out functionality to be #lang-specific
+
+   . show tooltip on bound identifiers that have no binding occurrences
+
+   . documentation improvements
+
+   . bug fixes
+
+------------------------------
+       Version 8.10
+------------------------------
+
+   . The define-popdown in the upper left corner of the DrRacket
+     window is customizable via `drracket:define-popup` for each
+     #lang language
+
+   . misc bug fixes and documentation improvements
+
+------------------------------
+       Version 8.9
+------------------------------
+
+   . switching into and out of dark mode is handled better
+     on Mac OS and Linux
+
+   . improved the interaction between submodules and
+     require arrows in Check Syntax
+
+   . misc bug fixes
+
+------------------------------
+       Version 8.8
+------------------------------
+
+   . changed the way expression submission works in the interactions
+     window, slightly. As before, just typing return defers to the
+     language to decide (for #lang racket and related languages it
+     looks for a complete sexp), and typing alt- and control-return
+     forces a submission, even if it does not look complete. 
+
+     The new behavior is that shift-return never submits, even if the
+     input looks complete.
+
+   . bug fixes and documentation improvements
+
+------------------------------
+       Version 8.7
+------------------------------
+
+   . improved raco dependencies-graph and the Module Browser
+     (available in the View menu and the Racket menu with different
+     GUI styles). It is faster and has new support for filtering based
+     on packages.
+
+   . improve the responsiveness when killing programs that print a lot
+
+   . Emojis are supported in DrRacket's editor
+
+   . misc, minor bug fixes
+
+------------------------------
+       Version 8.6
+------------------------------
+
+   . bug fixes
+
+------------------------------
+       Version 8.5
+------------------------------
+
+   . added new file menu item 'Reopen Closed Tab' to open previously
+     closed tabs.
+   . Removed keyboard shortcut for 'Spell Check test' in edit menu due  
+     to conflict with  'Reopen Closed Tab'.
+
+------------------------------
+       Version 8.4
+------------------------------
+
+   . automatically hide the error message panel when it contains no
+     error message
+
+   . add coloring and indentation support to the interations window
+
+   . allow languages to specify which characters are parentheses, and
+     adapt the keybindings based on them
+
+   . added a drracket-tool-text-lib package to avoid dependencies on gui-lib
+
+   . improve the terminology around backup and autosave files
+
+   . bug fixes
+
+------------------------------
+       Version 8.3
+------------------------------
+
+   . add 'drracket:range-indentation for #lang-controlled
+     block indentation
+
+   . add support for #lang-based languages to specify which
+     parenthesis should be matched
+
+   . bug fixes
+
+------------------------------
+       Version 8.2
+------------------------------
+
+   . performance improvements when editing files with
+     picts that have large bitmaps embedded in them
+
+   . bug fixes
+
+------------------------------
        Version 8.1
 ------------------------------
 
@@ -15,6 +176,10 @@
 ------------------------------
        Version 8.0
 ------------------------------
+
+   . the DrRacket REPL ports accept simple-tree-text-markup
+     objects and renders them, offering the ability to print
+     things with boxes around them, among other things
 
    . add arrows for #%datum and #%app implicit forms,
      which avoids problems when removing requires
